@@ -4,9 +4,14 @@
 package authn
 
 import (
+	"cmp"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
+
+	"github.com/ory/x/logrusx"
 
 	"github.com/pkg/errors"
 	"github.com/tidwall/gjson"
@@ -18,12 +23,33 @@ import (
 	"github.com/ory/oathkeeper/pipeline"
 	"github.com/ory/oathkeeper/x/header"
 	"github.com/ory/x/otelx"
-	"github.com/ory/x/stringsx"
 )
 
 func init() {
+
 	gjson.AddModifier("this", func(json, arg string) string {
 		return json
+	})
+	gjson.AddModifier("split", func(json, arg string) string {
+		sep := arg[:1]
+		idx, _ := strconv.Atoi(arg[1:])
+		sp := strings.Split(json, sep)
+		if len(sp) < idx+1 {
+			return json
+		}
+
+		return sp[idx]
+	})
+	gjson.AddModifier("b64", func(json, arg string) string {
+		switch arg {
+		case "decode":
+			res, _ := base64.RawURLEncoding.DecodeString(json)
+			return string(res)
+		case "encode":
+			return base64.RawURLEncoding.EncodeToString([]byte(json))
+		default:
+			return base64.RawURLEncoding.EncodeToString([]byte(json))
+		}
 	})
 }
 
@@ -76,11 +102,12 @@ type AuthenticatorBearerToken struct {
 	c      configuration.Provider
 	client *http.Client
 	tracer trace.Tracer
+	logger *logrusx.Logger
 }
 
 var _ AuthenticatorForwardConfig = new(AuthenticatorBearerTokenConfiguration)
 
-func NewAuthenticatorBearerToken(c configuration.Provider, provider trace.TracerProvider) *AuthenticatorBearerToken {
+func NewAuthenticatorBearerToken(c configuration.Provider, provider trace.TracerProvider, logger *logrusx.Logger) *AuthenticatorBearerToken {
 	return &AuthenticatorBearerToken{
 		c: c,
 		client: &http.Client{
@@ -90,6 +117,7 @@ func NewAuthenticatorBearerToken(c configuration.Provider, provider trace.Tracer
 			),
 		},
 		tracer: provider.Tracer("oauthkeeper/pipeline/authn"),
+		logger: logger,
 	}
 }
 
@@ -129,7 +157,8 @@ func (a *AuthenticatorBearerToken) Config(config json.RawMessage) (*Authenticato
 func (a *AuthenticatorBearerToken) Authenticate(r *http.Request, session *AuthenticationSession, config json.RawMessage, _ pipeline.Rule) (err error) {
 	ctx, span := a.tracer.Start(r.Context(), "pipeline.authn.AuthenticatorBearerToken.Authenticate")
 	defer otelx.End(span, &err)
-	r = r.WithContext(ctx)
+	*r = *(r.WithContext(ctx))
+	//r = r.WithContext(ctx)
 
 	cf, err := a.Config(config)
 	if err != nil {
@@ -150,8 +179,8 @@ func (a *AuthenticatorBearerToken) Authenticate(r *http.Request, session *Authen
 		subject string
 		extra   map[string]interface{}
 
-		subjectRaw = []byte(stringsx.Coalesce(gjson.GetBytes(body, cf.SubjectFrom).Raw, "null"))
-		extraRaw   = []byte(stringsx.Coalesce(gjson.GetBytes(body, cf.ExtraFrom).Raw, "null"))
+		subjectRaw = []byte(cmp.Or(gjson.GetBytes(body, cf.SubjectFrom).Raw, "null"))
+		extraRaw   = []byte(cmp.Or(gjson.GetBytes(body, cf.ExtraFrom).Raw, "null"))
 	)
 
 	if err = json.Unmarshal(subjectRaw, &subject); err != nil {
@@ -164,5 +193,17 @@ func (a *AuthenticatorBearerToken) Authenticate(r *http.Request, session *Authen
 
 	session.Subject = subject
 	session.Extra = extra
+
+	var corrId string
+	if len(r.Header.Get("x-correlation-id")) > 0 {
+		corrId = r.Header.Get("x-correlation-id")
+	}
+
+	a.logger.
+		WithField("x-correlation-id", corrId).
+		WithField("subject", session.Subject).
+		WithField("extra", session.Extra).
+		Trace("hydrated subject and extra")
+
 	return nil
 }

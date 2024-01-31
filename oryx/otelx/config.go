@@ -10,6 +10,8 @@ import (
 )
 
 type JaegerConfig struct {
+	CollectorScheme   string         `json:"collector_scheme"`
+	CollectorAddress  string         `json:"collector_address"`
 	LocalAgentAddress string         `json:"local_agent_address"`
 	Sampling          JaegerSampling `json:"sampling"`
 }

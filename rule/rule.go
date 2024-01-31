@@ -258,20 +258,31 @@ func ensureMatchingEngine(rule *Rule, strategy configuration.MatchingStrategy) e
 }
 
 // ExtractRegexGroups returns the values matching the rule pattern
-func (r *Rule) ExtractRegexGroups(strategy configuration.MatchingStrategy, u *url.URL) ([]string, error) {
-	if err := ensureMatchingEngine(r, strategy); err != nil {
-		return nil, err
+func (r *Rule) ExtractRegexGroups(strategy configuration.MatchingStrategy, u *url.URL) ([]string, map[string]string, error) {
+	var (
+		err         error
+		groups      []string
+		namedGroups map[string]string
+	)
+	if err = ensureMatchingEngine(r, strategy); err != nil {
+		return nil, nil, err
 	}
 
 	if r.Match == nil {
-		return []string{}, nil
+		return []string{}, map[string]string{}, nil
 	}
 
 	matchAgainst := fmt.Sprintf("%s://%s%s", u.Scheme, u.Host, u.Path)
-	groups, err := r.matchingEngine.FindStringSubmatch(r.Match.GetURL(), matchAgainst)
-	if err != nil {
-		return nil, err
+	if groups, err = r.matchingEngine.FindStringSubmatch(r.Match.GetURL(), matchAgainst); err != nil {
+		return nil, nil, err
 	}
 
-	return groups, nil
+	if namedGroups, err = r.matchingEngine.FindNamedStringSubmatch(r.Match.GetURL(), matchAgainst); err != nil {
+		if groups != nil {
+			return groups, nil, err
+		}
+		return nil, nil, err
+	}
+
+	return groups, namedGroups, nil
 }

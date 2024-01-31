@@ -4,7 +4,9 @@
 package authn
 
 import (
+	"cmp"
 	"encoding/json"
+	"github.com/ory/x/logrusx"
 	"io"
 	"net/http"
 	"net/url"
@@ -15,11 +17,9 @@ import (
 	"github.com/pkg/errors"
 	"github.com/tidwall/gjson"
 
+	"github.com/ory/herodot"
 	"github.com/ory/oathkeeper/x/header"
 	"github.com/ory/x/otelx"
-	"github.com/ory/x/stringsx"
-
-	"github.com/ory/herodot"
 
 	"github.com/ory/oathkeeper/driver/configuration"
 	"github.com/ory/oathkeeper/helper"
@@ -80,11 +80,12 @@ type AuthenticatorCookieSession struct {
 	c      configuration.Provider
 	client *http.Client
 	tracer trace.Tracer
+	logger *logrusx.Logger
 }
 
 var _ AuthenticatorForwardConfig = new(AuthenticatorCookieSessionConfiguration)
 
-func NewAuthenticatorCookieSession(c configuration.Provider, provider trace.TracerProvider) *AuthenticatorCookieSession {
+func NewAuthenticatorCookieSession(c configuration.Provider, provider trace.TracerProvider, logger *logrusx.Logger) *AuthenticatorCookieSession {
 	return &AuthenticatorCookieSession{
 		c: c,
 		client: &http.Client{
@@ -94,6 +95,7 @@ func NewAuthenticatorCookieSession(c configuration.Provider, provider trace.Trac
 			),
 		},
 		tracer: provider.Tracer("oauthkeeper/pipeline/authn"),
+		logger: logger,
 	}
 }
 
@@ -133,7 +135,8 @@ func (a *AuthenticatorCookieSession) Config(config json.RawMessage) (*Authentica
 func (a *AuthenticatorCookieSession) Authenticate(r *http.Request, session *AuthenticationSession, config json.RawMessage, _ pipeline.Rule) (err error) {
 	ctx, span := a.tracer.Start(r.Context(), "pipeline.authn.AuthenticatorCookieSession.Authenticate")
 	defer otelx.End(span, &err)
-	r = r.WithContext(ctx)
+	//r = r.WithContext(ctx)
+	*r = *(r.WithContext(ctx))
 
 	cf, err := a.Config(config)
 	if err != nil {
@@ -153,8 +156,8 @@ func (a *AuthenticatorCookieSession) Authenticate(r *http.Request, session *Auth
 		subject string
 		extra   map[string]interface{}
 
-		subjectRaw = []byte(stringsx.Coalesce(gjson.GetBytes(body, cf.SubjectFrom).Raw, "null"))
-		extraRaw   = []byte(stringsx.Coalesce(gjson.GetBytes(body, cf.ExtraFrom).Raw, "null"))
+		subjectRaw = []byte(cmp.Or(gjson.GetBytes(body, cf.SubjectFrom).Raw, "null"))
+		extraRaw   = []byte(cmp.Or(gjson.GetBytes(body, cf.ExtraFrom).Raw, "null"))
 	)
 
 	if err = json.Unmarshal(subjectRaw, &subject); err != nil {
@@ -167,6 +170,18 @@ func (a *AuthenticatorCookieSession) Authenticate(r *http.Request, session *Auth
 
 	session.Subject = subject
 	session.Extra = extra
+
+	var corrId string
+	if len(r.Header.Get("x-correlation-id")) > 0 {
+		corrId = r.Header.Get("x-correlation-id")
+	}
+
+	a.logger.
+		WithField("x-correlation-id", corrId).
+		WithField("subject", session.Subject).
+		WithField("extra", session.Extra).
+		Trace("hydrated subject and extra")
+
 	return nil
 }
 
@@ -232,6 +247,11 @@ func PrepareRequest(r *http.Request, cf AuthenticatorForwardConfig) (http.Reques
 		Method: m,
 		URL:    reqURL,
 		Header: http.Header{},
+	}
+
+	deviceEntropy := r.URL.Query().Get("device")
+	if deviceEntropy != "" {
+		req.Header.Set("X-Session-Entropy", deviceEntropy)
 	}
 
 	// We need to copy only essential and configurable headers

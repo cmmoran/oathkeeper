@@ -6,6 +6,7 @@ package authn
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/ory/x/logrusx"
 	"net/http"
 	"strings"
 
@@ -25,6 +26,7 @@ import (
 type AuthenticatorJWTRegistry interface {
 	credentials.VerifierRegistry
 	Tracer() trace.Tracer
+	Logger() *logrusx.Logger
 }
 
 type AuthenticatorOAuth2JWTConfiguration struct {
@@ -77,7 +79,8 @@ func (a *AuthenticatorJWT) Config(config json.RawMessage) (*AuthenticatorOAuth2J
 func (a *AuthenticatorJWT) Authenticate(r *http.Request, session *AuthenticationSession, config json.RawMessage, _ pipeline.Rule) (err error) {
 	ctx, span := a.r.Tracer().Start(r.Context(), "pipeline.authn.AuthenticatorJWT.Authenticate")
 	defer otelx.End(span, &err)
-	r = r.WithContext(ctx)
+	*r = *(r.WithContext(ctx))
+	//r = r.WithContext(ctx)
 
 	cf, err := a.Config(config)
 	if err != nil {
@@ -114,8 +117,8 @@ func (a *AuthenticatorJWT) Authenticate(r *http.Request, session *Authentication
 	})
 	if err != nil {
 		de := herodot.ToDefaultError(err, "")
-		r := fmt.Sprintf("%+v", de)
-		return a.tryEnrichResultErr(token, helper.ErrUnauthorized.WithReason(r).WithTrace(err))
+		rsn := fmt.Sprintf("%+v", de)
+		return a.tryEnrichResultErr(token, helper.ErrUnauthorized.WithReason(rsn).WithTrace(err))
 	}
 
 	claims, ok := pt.Claims.(jwt.MapClaims)
@@ -125,6 +128,17 @@ func (a *AuthenticatorJWT) Authenticate(r *http.Request, session *Authentication
 
 	session.Subject = jwtx.ParseMapStringInterfaceClaims(claims).Subject
 	session.Extra = claims
+
+	var corrId string
+	if len(r.Header.Get("x-correlation-id")) > 0 {
+		corrId = r.Header.Get("x-correlation-id")
+	}
+
+	a.r.Logger().
+		WithField("x-correlation-id", corrId).
+		WithField("subject", session.Subject).
+		WithField("extra", session.Extra).
+		Trace("hydrated subject and extra")
 
 	return nil
 }

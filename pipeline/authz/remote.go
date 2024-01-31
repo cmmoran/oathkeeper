@@ -5,12 +5,15 @@ package authz
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"text/template"
 	"time"
+
+	"github.com/sirupsen/logrus"
 
 	"github.com/pkg/errors"
 
@@ -26,12 +29,20 @@ import (
 	"github.com/ory/oathkeeper/x"
 )
 
+type SignedPayloadRemoteConfiguration struct {
+	Header    string `json:"header"`
+	SharedKey string `json:"shared_key"`
+	JWKSURL   string `json:"jwks_url"`
+	Issuer    string `json:"issuer_url"`
+}
+
 // AuthorizerRemoteConfiguration represents a configuration for the remote authorizer.
 type AuthorizerRemoteConfiguration struct {
 	Remote                           string                              `json:"remote"`
 	Headers                          map[string]string                   `json:"headers"`
 	ForwardResponseHeadersToUpstream []string                            `json:"forward_response_headers_to_upstream"`
 	Retry                            *AuthorizerRemoteRetryConfiguration `json:"retry"`
+	SignedPayload                    *SignedPayloadRemoteConfiguration   `json:"signed_payload"`
 }
 
 type AuthorizerRemoteRetryConfiguration struct {
@@ -43,15 +54,33 @@ type AuthorizerRemoteRetryConfiguration struct {
 type AuthorizerRemote struct {
 	c configuration.Provider
 
+	atr    AuthorizerTokenRegistry
 	client *http.Client
 	t      *template.Template
 	tracer trace.Tracer
 }
 
 // NewAuthorizerRemote creates a new AuthorizerRemote.
-func NewAuthorizerRemote(c configuration.Provider, d interface{ Tracer() trace.Tracer }) *AuthorizerRemote {
+func NewAuthorizerRemote(c configuration.Provider, d interface {
+	AuthorizerTokenRegistry
+	Tracer() trace.Tracer
+}) *AuthorizerRemote {
 	return &AuthorizerRemote{
 		c:      c,
+		atr:    d,
+		client: httpx.NewResilientClient().StandardClient(),
+		t:      x.NewTemplate("remote"),
+		tracer: d.Tracer(),
+	}
+}
+
+// NewAuthorizerRemoteNoop creates a new AuthorizerRemote.
+func NewAuthorizerRemoteNoop(c configuration.Provider, d interface {
+	Tracer() trace.Tracer
+}) *AuthorizerRemote {
+	return &AuthorizerRemote{
+		c:      c,
+		atr:    nil,
 		client: httpx.NewResilientClient().StandardClient(),
 		t:      x.NewTemplate("remote"),
 		tracer: d.Tracer(),
@@ -67,16 +96,23 @@ func (a *AuthorizerRemote) GetID() string {
 func (a *AuthorizerRemote) Authorize(r *http.Request, session *authn.AuthenticationSession, config json.RawMessage, rl pipeline.Rule) (err error) {
 	ctx, span := a.tracer.Start(r.Context(), "pipeline.authz.AuthorizerRemote.Authorize")
 	defer otelx.End(span, &err)
+	*r = *(r.WithContext(ctx))
+
+	var corrId string
+	if len(r.Header.Get("x-correlation-id")) > 0 {
+		corrId = r.Header.Get("x-correlation-id")
+	}
 
 	c, err := a.Config(config)
 	if err != nil {
 		return err
 	}
 
+	var body bytes.Buffer
 	read, write := io.Pipe()
 	go func() {
-		err := pipeRequestBody(r, write)
-		write.CloseWithError(errors.Wrapf(err, `could not pipe request body in rule "%s"`, rl.GetID()))
+		gerr := pipeRequestBody(r, io.MultiWriter(write, &body))
+		_ = write.CloseWithError(errors.Wrapf(gerr, `could not pipe request body in rule "%s"`, rl.GetID()))
 	}()
 
 	req, err := http.NewRequestWithContext(ctx, "POST", c.Remote, read)
@@ -84,6 +120,12 @@ func (a *AuthorizerRemote) Authorize(r *http.Request, session *authn.Authenticat
 		return errors.WithStack(err)
 	}
 	req.Header.Add("Content-Type", r.Header.Get("Content-Type"))
+	if len(corrId) > 0 {
+		req.Header.Add("X-Correlation-ID", corrId)
+	}
+	if fingerprint := r.Header.Get("X-Session-Entropy"); len(fingerprint) > 0 {
+		req.Header.Add("X-Session-Entropy", fingerprint)
+	}
 	authz := r.Header.Get("Authorization")
 	if authz != "" {
 		req.Header.Add("Authorization", authz)
@@ -114,6 +156,30 @@ func (a *AuthorizerRemote) Authorize(r *http.Request, session *authn.Authenticat
 
 		req.Header.Set(hdr, headerValue.String())
 	}
+
+	if c.SignedPayload != nil && len(body.Bytes()) > 0 {
+		header := c.SignedPayload.Header
+		sharedKey := c.SignedPayload.SharedKey
+		jwksUrl := c.SignedPayload.JWKSURL
+		issuer := c.SignedPayload.Issuer
+
+		log.WithFields(logrus.Fields{
+			"x-correlation-id": corrId,
+			"header":           header,
+			"jwksUrl":          jwksUrl,
+			"issuer":           issuer,
+			"body":             base64.RawURLEncoding.EncodeToString(body.Bytes()),
+		}).Trace("signing body payload (remote)")
+		if err = signPayload(r.Context(), a.atr.CredentialsSigner(), req, body, header, sharedKey, jwksUrl, issuer); err != nil {
+			return err
+		}
+	}
+
+	log.WithFields(logrus.Fields{
+		"x-correlation-id": corrId,
+		"header":           req.Header,
+		"url":              req.URL.String(),
+	}).Trace("issuing remote authorizer call")
 
 	res, err := a.client.Do(req)
 

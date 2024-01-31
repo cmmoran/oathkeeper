@@ -35,8 +35,13 @@ func (ge *globMatchingEngine) ReplaceAllString(_, _, _ string) (string, error) {
 }
 
 // FindStringSubmatch is noop for now and always returns an empty array
-func (ge *globMatchingEngine) FindStringSubmatch(pattern, matchAgainst string) ([]string, error) {
+func (ge *globMatchingEngine) FindStringSubmatch(_, _ string) ([]string, error) {
 	return []string{}, nil
+}
+
+// FindNamedStringSubmatch is noop for now and always returns an empty map[string]string
+func (ge *globMatchingEngine) FindNamedStringSubmatch(_, _ string) (map[string]string, error) {
+	return map[string]string{}, nil
 }
 
 func (ge *globMatchingEngine) compile(pattern string) error {

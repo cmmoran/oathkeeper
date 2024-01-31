@@ -5,14 +5,22 @@ package authz
 
 import (
 	"bytes"
+	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"text/template"
 	"time"
 
+	"github.com/sirupsen/logrus"
+
+	"github.com/ory/x/logrusx"
+
 	"github.com/pkg/errors"
+
+	"github.com/ory/oathkeeper/credentials"
 
 	"github.com/ory/x/httpx"
 	"github.com/ory/x/otelx"
@@ -26,6 +34,15 @@ import (
 	"github.com/ory/oathkeeper/x"
 )
 
+var log = logrusx.New("ORY Oathkeeper", x.Version, logrusx.ForceFormat("json"))
+
+type SignedPayloadRemoteJsonConfiguration struct {
+	Header    string `json:"header"`
+	SharedKey string `json:"shared_key"`
+	JWKSURL   string `json:"jwks_url"`
+	Issuer    string `json:"issuer_url"`
+}
+
 // AuthorizerRemoteJSONConfiguration represents a configuration for the remote_json authorizer.
 type AuthorizerRemoteJSONConfiguration struct {
 	Remote                           string                                  `json:"remote"`
@@ -33,6 +50,7 @@ type AuthorizerRemoteJSONConfiguration struct {
 	Payload                          string                                  `json:"payload"`
 	ForwardResponseHeadersToUpstream []string                                `json:"forward_response_headers_to_upstream"`
 	Retry                            *AuthorizerRemoteJSONRetryConfiguration `json:"retry"`
+	SignedPayload                    *SignedPayloadRemoteJsonConfiguration   `json:"signed_payload"`
 }
 
 type AuthorizerRemoteJSONRetryConfiguration struct {
@@ -45,19 +63,41 @@ func (c *AuthorizerRemoteJSONConfiguration) PayloadTemplateID() string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(c.Payload)))
 }
 
+type AuthorizerTokenRegistry interface {
+	credentials.SignerRegistry
+}
+
 // AuthorizerRemoteJSON implements the Authorizer interface.
 type AuthorizerRemoteJSON struct {
 	c configuration.Provider
 
+	atr    AuthorizerTokenRegistry
 	client *http.Client
 	t      *template.Template
 	tracer trace.Tracer
 }
 
 // NewAuthorizerRemoteJSON creates a new AuthorizerRemoteJSON.
-func NewAuthorizerRemoteJSON(c configuration.Provider, d interface{ Tracer() trace.Tracer }) *AuthorizerRemoteJSON {
+func NewAuthorizerRemoteJSON(c configuration.Provider, d interface {
+	AuthorizerTokenRegistry
+	Tracer() trace.Tracer
+}) *AuthorizerRemoteJSON {
 	return &AuthorizerRemoteJSON{
 		c:      c,
+		atr:    d,
+		client: httpx.NewResilientClient().StandardClient(),
+		t:      x.NewTemplate("remote_json"),
+		tracer: d.Tracer(),
+	}
+}
+
+// NewAuthorizerRemoteJSONNoop creates a new AuthorizerRemoteJSON.
+func NewAuthorizerRemoteJSONNoop(c configuration.Provider, d interface {
+	Tracer() trace.Tracer
+}) *AuthorizerRemoteJSON {
+	return &AuthorizerRemoteJSON{
+		c:      c,
+		atr:    nil,
 		client: httpx.NewResilientClient().StandardClient(),
 		t:      x.NewTemplate("remote_json"),
 		tracer: d.Tracer(),
@@ -73,7 +113,12 @@ func (a *AuthorizerRemoteJSON) GetID() string {
 func (a *AuthorizerRemoteJSON) Authorize(r *http.Request, session *authn.AuthenticationSession, config json.RawMessage, rl pipeline.Rule) (err error) {
 	ctx, span := a.tracer.Start(r.Context(), "pipeline.authz.AuthorizerRemoteJSON.Authorize")
 	defer otelx.End(span, &err)
-	r = r.WithContext(ctx)
+	*r = *(r.WithContext(ctx))
+
+	var corrId string
+	if len(r.Header.Get("x-correlation-id")) > 0 {
+		corrId = r.Header.Get("x-correlation-id")
+	}
 
 	c, err := a.Config(config)
 	if err != nil {
@@ -105,9 +150,33 @@ func (a *AuthorizerRemoteJSON) Authorize(r *http.Request, session *authn.Authent
 		return errors.WithStack(err)
 	}
 	req.Header.Add("Content-Type", "application/json")
+	if len(corrId) > 0 {
+		req.Header.Add("X-Correlation-ID", corrId)
+	}
+	if fingerprint := r.Header.Get("X-Session-Entropy"); len(fingerprint) > 0 {
+		req.Header.Add("X-Session-Entropy", fingerprint)
+	}
 	authz := r.Header.Get("Authorization")
 	if authz != "" {
 		req.Header.Add("Authorization", authz)
+	}
+
+	if c.SignedPayload != nil && len(body.Bytes()) > 0 {
+		header := c.SignedPayload.Header
+		sharedKey := c.SignedPayload.SharedKey
+		jwksUrl := c.SignedPayload.JWKSURL
+		issuer := c.SignedPayload.Issuer
+
+		log.WithFields(logrus.Fields{
+			"x-correlation-id": corrId,
+			"header":           header,
+			"jwksUrl":          jwksUrl,
+			"issuer":           issuer,
+			"body":             string(body.Bytes()),
+		}).Trace("signing body payload (remote_json)")
+		if err = signPayload(r.Context(), a.atr.CredentialsSigner(), req, body, header, sharedKey, jwksUrl, issuer); err != nil {
+			return err
+		}
 	}
 
 	for hdr, templateString := range c.Headers {
@@ -136,7 +205,13 @@ func (a *AuthorizerRemoteJSON) Authorize(r *http.Request, session *authn.Authent
 		req.Header.Set(hdr, headerValue.String())
 	}
 
-	res, err := a.client.Do(req.WithContext(r.Context()))
+	log.WithFields(logrus.Fields{
+		"x-correlation-id": corrId,
+		"header":           req.Header,
+		"payload":          string(body.Bytes()),
+	}).Trace("issuing remote_json authorizer call")
+
+	res, err := a.client.Do(req)
 	if err != nil {
 		return errors.WithStack(err)
 	}
@@ -153,6 +228,13 @@ func (a *AuthorizerRemoteJSON) Authorize(r *http.Request, session *authn.Authent
 	}
 
 	return nil
+}
+
+func sign(msg, key []byte) string {
+	mac := hmac.New(sha256.New, key)
+	mac.Write(msg)
+
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // Validate implements the Authorizer interface.

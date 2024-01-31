@@ -12,6 +12,7 @@ import (
 
 type Signer interface {
 	Sign(ctx context.Context, location *url.URL, claims jwt.Claims) (string, error)
+	SignPayload(ctx context.Context, location *url.URL, payload string) (string, string, error)
 }
 
 type SignerRegistry interface {

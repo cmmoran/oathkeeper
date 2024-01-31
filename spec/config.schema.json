@@ -339,6 +339,44 @@
         }
       }
     },
+    "configSignedPayload": {
+      "type": "object",
+      "title": "Sign payload and set the signature to a named header",
+      "default": null,
+      "properties": {
+        "header": {
+          "title": "Header to contain the payload signature (base64)",
+          "type": "string",
+          "description": "The name of the request header that will be populated with the signature of the payload that will be sent to the authorizer",
+          "examples": ["X-Request-Signature", "X-Jwks-Signature"]
+        },
+        "shared_key": {
+          "title": "Shared key to use to sign the payload. (Cannot be set along with 'jwks_url')",
+          "type": "string",
+          "description": "The shared key to use to sign the payload to generate an HMAC signature of the payload",
+          "examples": ["47ac7a07-b504-458d-a081-c80da1cfe6cd"]
+        },
+        "jwks_url": {
+          "type": "string",
+          "format": "uri",
+          "title": "JSON Web Key URL (Cannot be set along with 'shared_key')",
+          "description": "Sets the URL where keys should be fetched from. Supports remote locations (http, https) as well as local filesystem paths.\n.",
+          "examples": [
+            "https://fetch-keys/from/this/location.json",
+            "file:///from/this/absolute/location.json",
+            "file://../from/this/relative/location.json"
+          ]
+        },
+        "issuer_url": {
+          "type": "string",
+          "format": "uri",
+          "title": "JSON Web Key Issuer",
+          "description": "Sets the url of the issuer issuing this key.\n.",
+          "examples": ["https://example.org/"]
+        }
+      },
+      "additionalProperties": false
+    },
     "configAuthenticatorsAnonymous": {
       "type": "object",
       "title": "Anonymous Authenticator Configuration",
@@ -653,6 +691,62 @@
         }
       },
       "additionalProperties": false
+    },
+    "configAuthenticatorsHttpMessageSigningPre9421": {
+      "type": "object",
+      "title": "HTTP Message Signing Authenticator Configuration (pre RFC 9421)",
+      "description": "This section is optional when the authenticator is disabled.",
+      "properties": {
+        "allow_insecure": {
+          "type": "boolean",
+          "title": "Allow Insecure",
+          "description": "Allow insecure issuer URIs. This is not recommended, but can be useful for testing.",
+          "default": false
+        },
+        "max_challenge_age": {
+          "type": "string",
+          "pattern": "^[0-9]+(ns|us|ms|s|m|h)$",
+          "title": "Max Challenge Age",
+          "description": "The maximum allowed age of the challenge. If the challenge age exceeds this value, the request will be rejected.",
+          "default": "5m",
+          "examples": ["500ms", "30s", "1m", "2h"]
+        },
+        "authorities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "allowed_issuers": {
+                "type": "array",
+                "additionalItems": false,
+                "minItems": 1,
+                "items": {
+                  "type": "string"
+                }
+              },
+              "headers": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "issuer": {
+                    "type": "string",
+                    "description": "The issuer header of the signed request."
+                  },
+                  "kid": {
+                    "type": "string",
+                    "description": "The kid header of the signed request."
+                  },
+                  "signature": {
+                    "type": "string",
+                    "description": "The signature header of the signed request."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     },
     "configAuthenticatorsOauth2ClientCredentials": {
       "type": "object",
@@ -973,6 +1067,9 @@
         },
         "retry": {
           "$ref": "#/definitions/retry"
+        },
+        "signed_payload": {
+          "$ref": "#/definitions/configSignedPayload"
         }
       },
       "required": ["remote"],
@@ -1015,6 +1112,9 @@
         },
         "retry": {
           "$ref": "#/definitions/retry"
+        },
+        "signed_payload": {
+          "$ref": "#/definitions/configSignedPayload"
         }
       },
       "required": ["remote", "payload"],
@@ -1477,6 +1577,36 @@
                 },
                 "config": {
                   "$ref": "#/definitions/configAuthenticatorsOauth2Introspection"
+                }
+              },
+              "required": ["config"]
+            },
+            {
+              "properties": {
+                "enabled": {
+                  "const": false
+                }
+              }
+            }
+          ]
+        },
+        "http_message_signing_pre9421": {
+          "title": "HTTP Message Signing (pre RFC 9421)",
+          "description": "The [`http_message_signing` authenticator](https://www.ory.sh/oathkeeper/docs/pipeline/authn#http_message_signing).",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "$ref": "#/definitions/handlerSwitch"
+            }
+          },
+          "oneOf": [
+            {
+              "properties": {
+                "enabled": {
+                  "const": true
+                },
+                "config": {
+                  "$ref": "#/definitions/configAuthenticatorsHttpMessageSigningPre9421"
                 }
               },
               "required": ["config"]
