@@ -23,8 +23,8 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ory/fosite"
 	"github.com/ory/gojsonschema"
+	"github.com/ory/oathkeeper/fosite"
 	"github.com/ory/x/configx"
 	"github.com/ory/x/logrusx"
 	"github.com/ory/x/otelx"

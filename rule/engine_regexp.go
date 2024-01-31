@@ -5,7 +5,10 @@ package rule
 
 import (
 	"errors"
+	"fmt"
 	"hash/crc64"
+	"strconv"
+	"strings"
 
 	"github.com/dlclark/regexp2"
 
@@ -23,7 +26,25 @@ func (re *regexpMatchingEngine) compile(pattern string) error {
 		re.table = crc64.MakeTable(polynomial)
 	}
 	if checksum := crc64.Checksum([]byte(pattern), re.table); checksum != re.checksum {
-		compiled, err := compiler.CompileRegex(pattern, '<', '>')
+		startDelim := byte('<')
+		endDelim := byte('>')
+		if strings.Contains(pattern, "<<") {
+			pattern = strings.ReplaceAll(pattern, "<<", "«")
+			startDelim = byte('«')
+		}
+		if strings.Contains(pattern, ">>") {
+			pattern = strings.ReplaceAll(pattern, ">>", "»")
+			endDelim = byte('»')
+		}
+		if strings.Contains(pattern, "(?>") || strings.Contains(pattern, "(?<") {
+			if strings.ContainsRune(pattern, '«') && strings.ContainsRune(pattern, '»') {
+				startDelim = byte('«')
+				endDelim = byte('»')
+			} else {
+				return errors.New(fmt.Sprintf("attempted to use regex 'possessive match' or regex 'lookbehind' without changing delimiters from '<...>' to '<<...>>' in: %s", pattern))
+			}
+		}
+		compiled, err := compiler.CompileRegex(pattern, startDelim, endDelim)
 		if err != nil {
 			return err
 		}
@@ -66,9 +87,34 @@ func (re *regexpMatchingEngine) FindStringSubmatch(pattern, matchAgainst string)
 	}
 
 	result := []string{}
-	for _, group := range m.Groups()[1:] {
-		result = append(result, group.String())
+	for groupIndex, group := range m.Groups()[1:] {
+		if nameAsInt, err := strconv.Atoi(group.Name); err == nil {
+			if groupIndex+1 == nameAsInt {
+				result = append(result, group.String())
+			}
+		}
 	}
 
 	return result, nil
+}
+
+// FindNamedStringSubmatch returns the named capture in matchAgainst following the pattern
+// or "", error: not match if the pattern doesn't match or the named capture doesn't exist
+func (re *regexpMatchingEngine) FindNamedStringSubmatch(pattern, matchAgainst string) (map[string]string, error) {
+	if err := re.compile(pattern); err != nil {
+		return nil, err
+	}
+
+	m, _ := re.compiled.FindStringMatch(matchAgainst)
+	if m == nil {
+		return nil, errors.New("not match")
+	}
+
+	result := make(map[string]string)
+	for _, group := range m.Groups()[1:] {
+		result[group.Name] = group.String()
+	}
+
+	return result, nil
+
 }

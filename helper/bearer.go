@@ -21,7 +21,7 @@ type BearerTokenLocation struct {
 func BearerTokenFromRequest(r *http.Request, tokenLocation *BearerTokenLocation) string {
 	if tokenLocation != nil {
 		if tokenLocation.Header != nil {
-			if *tokenLocation.Header == defaultAuthorizationHeader {
+			if strings.EqualFold(*tokenLocation.Header, defaultAuthorizationHeader) {
 				return DefaultBearerTokenFromRequest(r)
 			}
 			return r.Header.Get(*tokenLocation.Header)

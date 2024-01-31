@@ -325,6 +325,50 @@ func TestAuthenticatorOAuth2Introspection(t *testing.T) {
 				expectErr: true,
 			},
 			{
+				d:      "should pass because active and scope matching any",
+				r:      &http.Request{Header: http.Header{"Authorization": {"bearer token"}}},
+				config: []byte(`{ "scope_strategy": "exact", "scope_match": "any", "required_scope": ["scope-a", "scope-b", "scope-c"] }`),
+				setup: func(t *testing.T, m *httprouter.Router) {
+					m.POST("/oauth2/introspect", func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+						require.NoError(t, r.ParseForm())
+						require.Equal(t, "token", r.Form.Get("token"))
+						require.Equal(t, "", r.Form.Get("scope"))
+						require.NoError(t, json.NewEncoder(w).Encode(&AuthenticatorOAuth2IntrospectionResult{
+							Active:   true,
+							Subject:  "subject",
+							Audience: []string{"audience"},
+							Issuer:   "issuer",
+							Username: "username",
+							Extra:    map[string]interface{}{"extra": "foo"},
+							Scope:    "scope-b",
+						}))
+					})
+				},
+				expectErr: false,
+			},
+			{
+				d:      "should fail because active but scope not matching any",
+				r:      &http.Request{Header: http.Header{"Authorization": {"bearer token"}}},
+				config: []byte(`{ "scope_strategy": "exact", "scope_match": "any", "required_scope": ["scope-a", "scope-b", "scope-c"] }`),
+				setup: func(t *testing.T, m *httprouter.Router) {
+					m.POST("/oauth2/introspect", func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+						require.NoError(t, r.ParseForm())
+						require.Equal(t, "token", r.Form.Get("token"))
+						require.Equal(t, "", r.Form.Get("scope"))
+						require.NoError(t, json.NewEncoder(w).Encode(&AuthenticatorOAuth2IntrospectionResult{
+							Active:   true,
+							Subject:  "subject",
+							Audience: []string{"audience"},
+							Issuer:   "issuer",
+							Username: "username",
+							Extra:    map[string]interface{}{"extra": "foo"},
+							Scope:    "scope-z",
+						}))
+					})
+				},
+				expectErr: true,
+			},
+			{
 				d:      "should pass because active and scope matching hierarchically",
 				r:      &http.Request{Header: http.Header{"Authorization": {"bearer token"}}},
 				config: []byte(`{ "scope_strategy": "hierarchic", "required_scope": ["scope-a", "scope-b.foo", "scope-c.bar"] }`),
@@ -838,6 +882,9 @@ func TestAuthenticatorOAuth2Introspection(t *testing.T) {
 
 		conf.SetForTest(t, configuration.AuthenticatorOAuth2TokenIntrospectionIsEnabled, true)
 		require.Error(t, a.Validate(json.RawMessage(`{"introspection_url":"/oauth2/token"}`)))
+
+		conf.SetForTest(t, configuration.AuthenticatorOAuth2TokenIntrospectionIsEnabled, true)
+		require.Error(t, a.Validate(json.RawMessage(`{"introspection_url":"http://localhost/oauth2/token","scope_match":"invalid"}`)))
 	})
 
 	t.Run("method=config", func(t *testing.T) {

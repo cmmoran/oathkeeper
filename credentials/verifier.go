@@ -9,7 +9,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/ory/fosite"
+	"github.com/ory/oathkeeper/fosite"
 )
 
 type Verifier interface {
@@ -18,6 +18,12 @@ type Verifier interface {
 		token string,
 		r *ValidationContext,
 	) (*jwt.Token, error)
+	VerifyPayload(
+		ctx context.Context,
+		r *ValidationContext,
+		signature string,
+		payload []byte,
+	) error
 }
 
 type VerifierRegistry interface {
@@ -31,4 +37,6 @@ type ValidationContext struct {
 	ScopeStrategy fosite.ScopeStrategy
 	Scope         []string
 	KeyURLs       []url.URL
+
+	KeyIDs []string
 }

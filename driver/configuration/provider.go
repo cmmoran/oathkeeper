@@ -11,7 +11,7 @@ import (
 
 	"github.com/rs/cors"
 
-	"github.com/ory/fosite"
+	"github.com/ory/oathkeeper/fosite"
 	"github.com/ory/x/configx"
 	"github.com/ory/x/otelx"
 )
