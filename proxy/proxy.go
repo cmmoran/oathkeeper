@@ -47,11 +47,22 @@ const (
 
 func (d *Proxy) RoundTrip(r *http.Request) (*http.Response, error) {
 	rw := NewSimpleResponseWriter()
+	var (
+		corrId, fingerprint string
+	)
+	if len(r.Header.Get("x-correlation-id")) > 0 {
+		corrId = r.Header.Get("x-correlation-id")
+	}
+	if len(r.Header.Get("x-session-entropy")) > 0 {
+		fingerprint = r.Header.Get("x-session-entropy")
+	}
 	fields := map[string]interface{}{
-		"http_method":     r.Method,
-		"http_url":        r.URL.String(),
-		"http_host":       r.Host,
-		"http_user_agent": r.UserAgent(),
+		"http_method":       r.Method,
+		"http_url":          r.URL.String(),
+		"http_host":         r.Host,
+		"http_user_agent":   r.UserAgent(),
+		"x-correlation-id":  corrId,
+		"x-session-entropy": fingerprint,
 	}
 
 	if sess, ok := r.Context().Value(ContextKeySession).(*authn.AuthenticationSession); ok {
@@ -59,6 +70,9 @@ func (d *Proxy) RoundTrip(r *http.Request) (*http.Response, error) {
 	}
 
 	rl, _ := r.Context().Value(ContextKeyMatchedRule).(*rule.Rule)
+	if rl != nil {
+		fields["rule_id"] = rl.ID
+	}
 
 	if err, ok := r.Context().Value(director).(error); ok && err != nil {
 		d.r.Logger().WithError(err).
@@ -86,7 +100,7 @@ func (d *Proxy) RoundTrip(r *http.Request) (*http.Response, error) {
 			d.r.Logger().
 				WithField("granted", true).
 				WithFields(fields).
-				Info("Access request granted")
+				Trace("Access request granted")
 		}
 
 		return res, err

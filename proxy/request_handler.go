@@ -157,14 +157,26 @@ func (d *requestHandler) HandleError(w http.ResponseWriter, r *http.Request, rl 
 }
 
 func (d *requestHandler) HandleRequest(r *http.Request, rl *rule.Rule) (session *authn.AuthenticationSession, err error) {
-	var found bool
+	var (
+		found               bool
+		corrId, fingerprint string
+	)
+
+	if len(r.Header.Get("x-correlation-id")) > 0 {
+		corrId = r.Header.Get("x-correlation-id")
+	}
+	if len(r.Header.Get("x-session-entropy")) > 0 {
+		fingerprint = r.Header.Get("x-session-entropy")
+	}
 
 	fields := map[string]interface{}{
-		"http_method":     r.Method,
-		"http_url":        r.URL.String(),
-		"http_host":       r.Host,
-		"http_user_agent": r.UserAgent(),
-		"rule_id":         rl.ID,
+		"http_method":       r.Method,
+		"http_url":          r.URL.String(),
+		"http_host":         r.Host,
+		"http_user_agent":   r.UserAgent(),
+		"rule_id":           rl.ID,
+		"x-correlation-id":  corrId,
+		"x-session-entropy": fingerprint,
 	}
 
 	// initialize the session used during all the flow
@@ -190,6 +202,12 @@ func (d *requestHandler) HandleRequest(r *http.Request, rl *rule.Rule) (session 
 				WithField("reason_id", "unknown_authentication_handler").
 				Warn("Unknown authentication handler requested")
 			return nil, err
+		} else {
+			d.r.Logger().
+				WithFields(fields).
+				WithField("granted", true).
+				WithField("authentication_handler", a.Handler).
+				Trace("Found authentication handler")
 		}
 
 		if err := anh.Validate(a.Config); err != nil {
@@ -200,10 +218,24 @@ func (d *requestHandler) HandleRequest(r *http.Request, rl *rule.Rule) (session 
 				WithField("reason_id", "invalid_authentication_handler").
 				Warn("Unable to validate use of authentication handler")
 			return nil, err
+		} else {
+			d.r.Logger().
+				WithFields(fields).
+				WithField("config", a.Config).
+				WithField("granted", true).
+				WithField("authentication_handler", a.Handler).
+				Trace("Validated authentication handler configuration")
 		}
 
 		err = anh.Authenticate(r, session, a.Config, rl)
 		if err != nil {
+			d.r.Logger().
+				WithError(err).
+				WithFields(fields).
+				WithField("config", a.Config).
+				WithField("authentication_handler", a.Handler).
+				Trace("Authentication failed for handler trying next...")
+
 			switch errors.Cause(err).Error() {
 			case authn.ErrAuthenticatorNotResponsible.Error():
 				// The authentication handler is not responsible for handling this request, skip to the next handler
@@ -225,6 +257,13 @@ func (d *requestHandler) HandleRequest(r *http.Request, rl *rule.Rule) (session 
 				return nil, err
 			}
 		} else {
+			d.r.Logger().
+				WithError(err).
+				WithFields(fields).
+				WithField("config", a.Config).
+				WithField("subject", session.Subject).
+				WithField("authentication_handler", a.Handler).
+				Trace("Authentication success for handler")
 			// The first authenticator that matches must return the session
 			found = true
 			fields["subject"] = session.Subject
@@ -327,21 +366,39 @@ func (d *requestHandler) InitializeAuthnSession(r *http.Request, rl *rule.Rule) 
 	session := &authn.AuthenticationSession{
 		Subject: "",
 	}
-
-	values, err := rl.ExtractRegexGroups(d.c.AccessRuleMatchingStrategy(), r.URL)
+	var corrId, fingerprint string
+	if len(r.Header.Get("x-correlation-id")) > 0 {
+		corrId = r.Header.Get("x-correlation-id")
+	}
+	if len(r.Header.Get("x-session-entropy")) > 0 {
+		fingerprint = r.Header.Get("x-session-entropy")
+	}
+	values, namedGroups, err := rl.ExtractRegexGroups(d.c.AccessRuleMatchingStrategy(), r.URL)
 	if err != nil {
 		d.r.Logger().WithError(err).
 			WithField("rule_id", rl.ID).
 			WithField("access_url", r.URL.String()).
 			WithField("reason_id", "capture_groups_error").
+			WithField("x-correlation-id", corrId).
+			WithField("x-session-entropy", fingerprint).
 			Warn("Unable to capture the groups for the MatchContext")
 	} else {
 		session.MatchContext = authn.MatchContext{
-			RegexpCaptureGroups: values,
-			URL:                 r.URL,
-			Method:              r.Method,
-			Header:              r.Header,
+			RegexpCaptureGroups:      values,
+			RegexpNamedCaptureGroups: namedGroups,
+			URL:                      r.URL,
+			Method:                   r.Method,
+			Header:                   r.Header,
+			Extra:                    map[string]any{"rule_id": rl.ID},
 		}
+		d.r.Logger().
+			WithField("match_context", session.MatchContext).
+			WithField("rule_id", rl.ID).
+			WithField("access_url", r.URL.String()).
+			WithField("x-correlation-id", corrId).
+			WithField("x-session-entropy", fingerprint).
+			Trace("Extracted match context")
+
 	}
 
 	return session

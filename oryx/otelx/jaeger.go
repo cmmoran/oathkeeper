@@ -4,6 +4,7 @@
 package otelx
 
 import (
+	"fmt"
 	"net"
 
 	"go.opentelemetry.io/contrib/propagators/b3"
@@ -28,16 +29,37 @@ import (
 // optionally alongside [otelx.JaegerSampling.ServerURL] to consult a remote server
 // for the sampling strategy to be used.
 func SetupJaeger(t *Tracer, tracerName string, c *Config) (trace.Tracer, error) {
+	jaegerScheme := ""
+	jaegerPath := ""
 	host, port, err := net.SplitHostPort(c.Providers.Jaeger.LocalAgentAddress)
 	if err != nil {
-		return nil, err
+		jaegerScheme = c.Providers.Jaeger.CollectorScheme
+		var nerr error
+		if host, port, nerr = net.SplitHostPort(c.Providers.Jaeger.CollectorAddress); nerr != nil {
+			return nil, err
+		}
+		if jaegerScheme == "http" {
+			jaegerPath = "/api/traces"
+			if port == "14268" {
+				jaegerPath = "/api/traces"
+			}
+			if port == "4318" {
+				jaegerPath = "/v1/traces"
+			}
+		}
 	}
 
-	exp, err := jaeger.New(
-		jaeger.WithAgentEndpoint(
+	var endpointOption jaeger.EndpointOption
+	if jaegerScheme == "http" || jaegerScheme == "https" || jaegerScheme == "grpc" {
+		endpointOption = jaeger.WithCollectorEndpoint(
+			jaeger.WithEndpoint(fmt.Sprintf("%s://%s:%s%s", jaegerScheme, host, port, jaegerPath)),
+		)
+	} else {
+		endpointOption = jaeger.WithAgentEndpoint(
 			jaeger.WithAgentHost(host), jaeger.WithAgentPort(port),
-		),
-	)
+		)
+	}
+	exp, err := jaeger.New(endpointOption)
 	if err != nil {
 		return nil, err
 	}

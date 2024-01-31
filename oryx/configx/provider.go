@@ -473,6 +473,8 @@ func (p *Provider) TracingConfig(serviceName string) *otelx.Config {
 					ServerURL:    p.String("tracing.providers.jaeger.sampling.server_url"),
 					TraceIdRatio: p.Float64F("tracing.providers.jaeger.sampling.trace_id_ratio", 1),
 				},
+				CollectorScheme:   p.String("tracing.providers.jaeger.collector_scheme"),
+				CollectorAddress:  p.String("tracing.providers.jaeger.collector_address"),
 				LocalAgentAddress: p.String("tracing.providers.jaeger.local_agent_address"),
 			},
 			Zipkin: otelx.ZipkinConfig{

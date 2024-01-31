@@ -2,9 +2,10 @@ module github.com/ory/oathkeeper
 
 go 1.25
 
-replace github.com/mattn/go-sqlite3 => github.com/mattn/go-sqlite3 v1.14.28
-
-replace github.com/ory/x => ./oryx
+replace (
+	github.com/mattn/go-sqlite3 => github.com/mattn/go-sqlite3 v1.14.10
+	github.com/ory/x => ./oryx
+)
 
 require (
 	github.com/Azure/azure-pipeline-go v0.2.2
@@ -13,8 +14,8 @@ require (
 	github.com/auth0/go-jwt-middleware/v2 v2.3.0
 	github.com/aws/aws-sdk-go v1.55.6
 	github.com/blang/semver v3.5.1+incompatible
-	github.com/dgraph-io/ristretto v1.0.0
-	github.com/dlclark/regexp2 v1.2.0
+	github.com/dgraph-io/ristretto/v2 v2.2.0
+	github.com/dlclark/regexp2 v1.11.5
 	github.com/ghodss/yaml v1.0.0
 	github.com/go-faker/faker/v4 v4.0.0-beta.2
 	github.com/go-jose/go-jose/v3 v3.0.4
@@ -37,8 +38,8 @@ require (
 	github.com/knadh/koanf/v2 v2.2.2
 	github.com/lib/pq v1.10.9
 	github.com/mitchellh/copystructure v1.2.0
+	github.com/oklog/ulid v1.3.1
 	github.com/ory/analytics-go/v5 v5.0.1
-	github.com/ory/fosite v0.48.0
 	github.com/ory/go-acc v0.2.9-0.20230103102148-6b1c9a70dbbe
 	github.com/ory/gojsonschema v1.2.0
 	github.com/ory/graceful v0.1.1
@@ -65,6 +66,7 @@ require (
 	gocloud.dev v0.20.0
 	golang.org/x/crypto v0.45.0
 	golang.org/x/oauth2 v0.33.0
+	golang.org/x/text v0.31.0
 	google.golang.org/api v0.240.0
 	google.golang.org/grpc v1.74.2
 )
@@ -107,7 +109,6 @@ require (
 	github.com/cpuguy83/go-md2man/v2 v2.0.6 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0 // indirect
-	github.com/dgraph-io/ristretto/v2 v2.2.0 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/cli v28.3.3+incompatible // indirect
 	github.com/docker/docker v28.3.3+incompatible // indirect
@@ -159,7 +160,6 @@ require (
 	github.com/googleapis/gax-go/v2 v2.14.2 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
 	github.com/gorilla/handlers v1.5.1 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.1 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
@@ -200,7 +200,6 @@ require (
 	github.com/mattn/go-ieproxy v0.0.1 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-sqlite3 v2.0.3+incompatible // indirect
-	github.com/mattn/goveralls v0.0.12 // indirect
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
@@ -208,17 +207,14 @@ require (
 	github.com/moby/sys/sequential v0.6.0 // indirect
 	github.com/moby/sys/user v0.4.0 // indirect
 	github.com/moby/term v0.5.2 // indirect
-	github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/nyaruka/phonenumbers v1.6.5 // indirect
-	github.com/oklog/ulid v1.3.1 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/opencontainers/runc v1.3.3 // indirect
 	github.com/opentracing/opentracing-go v1.2.0 // indirect
 	github.com/openzipkin/zipkin-go v0.4.3 // indirect
 	github.com/ory/dockertest/v3 v3.12.0 // indirect
-	github.com/ory/go-convenience v0.1.0 // indirect
 	github.com/ory/gojsonreference v0.0.0-20190720135523-6b606c2d8ee8 // indirect
 	github.com/ory/pop/v6 v6.3.2-0.20251203152233-a32233875f7e // indirect
 	github.com/pelletier/go-toml v1.9.5 // indirect
@@ -276,7 +272,6 @@ require (
 	golang.org/x/net v0.47.0 // indirect
 	golang.org/x/sync v0.18.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
-	golang.org/x/text v0.31.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
 	golang.org/x/tools v0.38.0 // indirect
 	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect
@@ -288,3 +283,5 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/ory/ladon => github.com/cmmoran/ladon v0.0.0-20240201192546-b65b9604f5db
