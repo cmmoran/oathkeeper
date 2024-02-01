@@ -341,7 +341,13 @@ func (d *requestHandler) InitializeAuthnSession(r *http.Request, rl *rule.Rule) 
 			URL:                 r.URL,
 			Method:              r.Method,
 			Header:              r.Header,
+			Extra:               map[string]interface{}{"rule_id": rl.ID},
 		}
+		d.r.Logger().
+			WithField("rule_id", rl.ID).
+			WithField("access_url", r.URL.String()).
+			Trace("Extracted match context")
+
 	}
 
 	return session

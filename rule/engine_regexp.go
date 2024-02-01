@@ -28,11 +28,13 @@ func (re *regexpMatchingEngine) compile(pattern string) error {
 		startDelim := byte('<')
 		endDelim := byte('>')
 		if strings.Contains(pattern, "(?>") || strings.Contains(pattern, "(?<") {
-			if strings.ContainsRune(pattern, '{') && strings.ContainsRune(pattern, '}') {
-				startDelim = byte('{')
-				endDelim = byte('}')
+			pattern = strings.ReplaceAll(pattern, "<<", "«")
+			pattern = strings.ReplaceAll(pattern, ">>", "»")
+			if strings.ContainsRune(pattern, '«') && strings.ContainsRune(pattern, '»') {
+				startDelim = byte('«')
+				endDelim = byte('»')
 			} else {
-				return errors.Errorf("attempted to use regex 'possessive match' or regex 'lookbehind' without changing delimiters from '<...>' to '{...}' in: %s", pattern)
+				return errors.Errorf("attempted to use regex 'possessive match' or regex 'lookbehind' without changing delimiters from '<...>' to '<<...>>' in: %s", pattern)
 			}
 		}
 		compiled, err := compiler.CompileRegex(pattern, startDelim, endDelim)

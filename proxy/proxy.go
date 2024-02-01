@@ -59,6 +59,9 @@ func (d *Proxy) RoundTrip(r *http.Request) (*http.Response, error) {
 	}
 
 	rl, _ := r.Context().Value(ContextKeyMatchedRule).(*rule.Rule)
+	if rl != nil {
+		fields["rule_id"] = rl.ID
+	}
 
 	if err, ok := r.Context().Value(director).(error); ok && err != nil {
 		d.r.Logger().WithError(err).
