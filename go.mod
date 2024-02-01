@@ -12,7 +12,7 @@ require (
 	github.com/aws/aws-sdk-go v1.34.28
 	github.com/blang/semver v3.5.1+incompatible
 	github.com/dgraph-io/ristretto v0.1.1
-	github.com/dlclark/regexp2 v1.2.0
+	github.com/dlclark/regexp2 v1.10.0
 	github.com/ghodss/yaml v1.0.0
 	github.com/go-faker/faker/v4 v4.0.0-beta.2
 	github.com/go-openapi/errors v0.20.3
@@ -255,3 +255,5 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/ory/ladon => github.com/cmmoran/ladon v0.0.0-20240201192546-b65b9604f5db
