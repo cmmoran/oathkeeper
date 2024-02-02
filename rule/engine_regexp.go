@@ -27,9 +27,15 @@ func (re *regexpMatchingEngine) compile(pattern string) error {
 	if checksum := crc64.Checksum([]byte(pattern), re.table); checksum != re.checksum {
 		startDelim := byte('<')
 		endDelim := byte('>')
-		if strings.Contains(pattern, "(?>") || strings.Contains(pattern, "(?<") {
+		if strings.Contains(pattern, "<<") {
 			pattern = strings.ReplaceAll(pattern, "<<", "«")
+			startDelim = byte('«')
+		}
+		if strings.Contains(pattern, ">>") {
 			pattern = strings.ReplaceAll(pattern, ">>", "»")
+			endDelim = byte('»')
+		}
+		if strings.Contains(pattern, "(?>") || strings.Contains(pattern, "(?<") {
 			if strings.ContainsRune(pattern, '«') && strings.ContainsRune(pattern, '»') {
 				startDelim = byte('«')
 				endDelim = byte('»')
