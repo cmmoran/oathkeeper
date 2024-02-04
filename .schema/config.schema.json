@@ -973,6 +973,35 @@
         },
         "retry": {
           "$ref": "#/definitions/retry"
+        },
+        "signed_payload": {
+          "title": "Sign payload and set the signature to a named header",
+          "default": null,
+          "properties": {
+            "header": {
+              "title": "Header to contain the payload signature (base64)",
+              "type": "string",
+              "description": "The name of the request header that will be populated with the signature of the payload that will be sent to the authorizer",
+              "examples": ["X-Request-Signature", "X-Jwks-Signature"]
+            },
+            "shared_key": {
+              "title": "Shared key to use to sign the payload. (Cannot be set along with 'jwks_url')",
+              "type": "string",
+              "description": "The shared key to use to sign the payload to generate an HMAC signature of the payload",
+              "examples": ["47ac7a07-b504-458d-a081-c80da1cfe6cd"]
+            },
+            "jwks_url": {
+              "type": "string",
+              "format": "uri",
+              "title": "JSON Web Key URL (Cannot be set along with 'shared_key')",
+              "description": "Sets the URL where keys should be fetched from. Supports remote locations (http, https) as well as local filesystem paths.\n.",
+              "examples": [
+                "https://fetch-keys/from/this/location.json",
+                "file:///from/this/absolute/location.json",
+                "file://../from/this/relative/location.json"
+              ]
+            }
+          }
         }
       },
       "required": ["remote"],
