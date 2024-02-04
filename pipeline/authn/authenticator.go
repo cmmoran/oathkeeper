@@ -50,11 +50,12 @@ type AuthenticationSession struct {
 }
 
 type MatchContext struct {
-	RegexpCaptureGroups []string               `json:"regexp_capture_groups"`
-	URL                 *url.URL               `json:"url"`
-	Method              string                 `json:"method"`
-	Header              http.Header            `json:"header"`
-	Extra               map[string]interface{} `json:"extra,omitempty"`
+	RegexpCaptureGroups      []string               `json:"regexp_capture_groups"`
+	RegexpNamedCaptureGroups map[string]string      `json:"regexp_named_capture_groups"`
+	URL                      *url.URL               `json:"url"`
+	Method                   string                 `json:"method"`
+	Header                   http.Header            `json:"header"`
+	Extra                    map[string]interface{} `json:"extra,omitempty"`
 }
 
 type AuthenticatorForwardConfig interface {
