@@ -9,7 +9,7 @@ import (
 	"net/http"
 )
 
-func pipeRequestBody(r *http.Request, w io.Writer) error {
+func pipeRequestBody(r *http.Request, w io.Writer, pbody *[]byte) error {
 	if r.Body == nil {
 		return nil
 	}
@@ -21,5 +21,7 @@ func pipeRequestBody(r *http.Request, w io.Writer) error {
 		return err
 	}
 	r.Body = io.NopCloser(&body)
+	*pbody = make([]byte, body.Len())
+	copy(*pbody, body.Bytes())
 	return err
 }

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/ory/x/urlx"
 	"io"
 	"net/http"
 	"text/template"
@@ -26,12 +27,19 @@ import (
 	"github.com/ory/oathkeeper/x"
 )
 
+type SignedPayloadRemoteConfiguration struct {
+	Header    string `json:"header"`
+	SharedKey string `json:"shared_key"`
+	JWKSURL   string `json:"jwks_url"`
+}
+
 // AuthorizerRemoteConfiguration represents a configuration for the remote authorizer.
 type AuthorizerRemoteConfiguration struct {
 	Remote                           string                              `json:"remote"`
 	Headers                          map[string]string                   `json:"headers"`
 	ForwardResponseHeadersToUpstream []string                            `json:"forward_response_headers_to_upstream"`
 	Retry                            *AuthorizerRemoteRetryConfiguration `json:"retry"`
+	SignedPayload                    *SignedPayloadRemoteConfiguration   `json:"signed_payload"`
 }
 
 type AuthorizerRemoteRetryConfiguration struct {
@@ -43,15 +51,20 @@ type AuthorizerRemoteRetryConfiguration struct {
 type AuthorizerRemote struct {
 	c configuration.Provider
 
+	atr    AuthorizerTokenRegistry
 	client *http.Client
 	t      *template.Template
 	tracer trace.Tracer
 }
 
 // NewAuthorizerRemote creates a new AuthorizerRemote.
-func NewAuthorizerRemote(c configuration.Provider, d interface{ Tracer() trace.Tracer }) *AuthorizerRemote {
+func NewAuthorizerRemote(c configuration.Provider, d interface {
+	AuthorizerTokenRegistry
+	Tracer() trace.Tracer
+}) *AuthorizerRemote {
 	return &AuthorizerRemote{
 		c:      c,
+		atr:    d,
 		client: httpx.NewResilientClient(httpx.ResilientClientWithTracer(d.Tracer())).StandardClient(),
 		t:      x.NewTemplate("remote"),
 		tracer: d.Tracer(),
@@ -74,9 +87,10 @@ func (a *AuthorizerRemote) Authorize(r *http.Request, session *authn.Authenticat
 		return err
 	}
 
+	var body []byte
 	read, write := io.Pipe()
 	go func() {
-		err := pipeRequestBody(r, write)
+		err := pipeRequestBody(r, write, &body)
 		write.CloseWithError(errors.Wrapf(err, `could not pipe request body in rule "%s"`, rl.GetID()))
 	}()
 
@@ -114,6 +128,37 @@ func (a *AuthorizerRemote) Authorize(r *http.Request, session *authn.Authenticat
 		}
 
 		req.Header.Set(hdr, headerValue.String())
+	}
+
+	if c.SignedPayload != nil {
+		header := c.SignedPayload.Header
+		sharedKey := c.SignedPayload.SharedKey
+		jwksUrl := c.SignedPayload.JWKSURL
+
+		if (sharedKey != "") == (jwksUrl != "") {
+			return errors.Wrap(err, "exactly one of hmac.shared_key or hmac.jwks_url must be specified")
+		}
+
+		if sharedKey != "" {
+			sig := sign(body, []byte(sharedKey))
+			if header == "" {
+				header = "X-Request-Signature"
+			}
+			req.Header.Add(header, sig)
+		} else if jwksUrl != "" {
+			if jwks, err := urlx.Parse(jwksUrl); err != nil {
+				return errors.WithStack(err)
+			} else if sig, keyId, err := a.atr.CredentialsSigner().SignPayload(r.Context(), jwks, string(body)); err != nil {
+				return errors.WithStack(err)
+			} else {
+				if header == "" {
+					header = "X-Jwks-Signature"
+				}
+				req.Header.Add(header, sig)
+				kidHeader := fmt.Sprintf("%s-Kid", header)
+				req.Header.Add(kidHeader, keyId)
+			}
+		}
 	}
 
 	res, err := a.client.Do(req.WithContext(r.Context()))
