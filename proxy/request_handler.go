@@ -328,7 +328,7 @@ func (d *requestHandler) InitializeAuthnSession(r *http.Request, rl *rule.Rule) 
 		Subject: "",
 	}
 
-	values, err := rl.ExtractRegexGroups(d.c.AccessRuleMatchingStrategy(), r.URL)
+	values, namedGroups, err := rl.ExtractRegexGroups(d.c.AccessRuleMatchingStrategy(), r.URL)
 	if err != nil {
 		d.r.Logger().WithError(err).
 			WithField("rule_id", rl.ID).
@@ -337,11 +337,12 @@ func (d *requestHandler) InitializeAuthnSession(r *http.Request, rl *rule.Rule) 
 			Warn("Unable to capture the groups for the MatchContext")
 	} else {
 		session.MatchContext = authn.MatchContext{
-			RegexpCaptureGroups: values,
-			URL:                 r.URL,
-			Method:              r.Method,
-			Header:              r.Header,
-			Extra:               map[string]interface{}{"rule_id": rl.ID},
+			RegexpCaptureGroups:      values,
+			RegexpNamedCaptureGroups: namedGroups,
+			URL:                      r.URL,
+			Method:                   r.Method,
+			Header:                   r.Header,
+			Extra:                    map[string]interface{}{"rule_id": rl.ID},
 		}
 		d.r.Logger().
 			WithField("rule_id", rl.ID).

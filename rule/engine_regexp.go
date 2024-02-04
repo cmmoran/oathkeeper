@@ -92,3 +92,24 @@ func (re *regexpMatchingEngine) FindStringSubmatch(pattern, matchAgainst string)
 
 	return result, nil
 }
+
+// FindNamedStringSubmatch returns the named capture in matchAgainst following the pattern
+// or "", error: not match if the pattern doesn't match or the named capture doesn't exist
+func (re *regexpMatchingEngine) FindNamedStringSubmatch(pattern, matchAgainst string) (map[string]string, error) {
+	if err := re.compile(pattern); err != nil {
+		return nil, err
+	}
+
+	m, _ := re.compiled.FindStringMatch(matchAgainst)
+	if m == nil {
+		return nil, errors.New("not match")
+	}
+
+	result := make(map[string]string)
+	for _, group := range m.Groups()[1:] {
+		result[group.Name] = group.String()
+	}
+
+	return result, nil
+
+}
