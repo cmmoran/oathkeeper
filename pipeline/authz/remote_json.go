@@ -5,9 +5,13 @@ package authz
 
 import (
 	"bytes"
+	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/ory/oathkeeper/credentials"
+	"github.com/ory/x/urlx"
 	"net/http"
 	"text/template"
 	"time"
@@ -26,6 +30,12 @@ import (
 	"github.com/ory/oathkeeper/x"
 )
 
+type SignedPayloadRemoteJsonConfiguration struct {
+	Header    string `json:"header"`
+	SharedKey string `json:"shared_key"`
+	JWKSURL   string `json:"jwks_url"`
+}
+
 // AuthorizerRemoteJSONConfiguration represents a configuration for the remote_json authorizer.
 type AuthorizerRemoteJSONConfiguration struct {
 	Remote                           string                                  `json:"remote"`
@@ -33,6 +43,7 @@ type AuthorizerRemoteJSONConfiguration struct {
 	Payload                          string                                  `json:"payload"`
 	ForwardResponseHeadersToUpstream []string                                `json:"forward_response_headers_to_upstream"`
 	Retry                            *AuthorizerRemoteJSONRetryConfiguration `json:"retry"`
+	SignedPayload                    *SignedPayloadRemoteJsonConfiguration   `json:"signed_payload"`
 }
 
 type AuthorizerRemoteJSONRetryConfiguration struct {
@@ -45,19 +56,28 @@ func (c *AuthorizerRemoteJSONConfiguration) PayloadTemplateID() string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(c.Payload)))
 }
 
+type AuthorizerTokenRegistry interface {
+	credentials.SignerRegistry
+}
+
 // AuthorizerRemoteJSON implements the Authorizer interface.
 type AuthorizerRemoteJSON struct {
 	c configuration.Provider
 
+	atr    AuthorizerTokenRegistry
 	client *http.Client
 	t      *template.Template
 	tracer trace.Tracer
 }
 
 // NewAuthorizerRemoteJSON creates a new AuthorizerRemoteJSON.
-func NewAuthorizerRemoteJSON(c configuration.Provider, d interface{ Tracer() trace.Tracer }) *AuthorizerRemoteJSON {
+func NewAuthorizerRemoteJSON(c configuration.Provider, d interface {
+	AuthorizerTokenRegistry
+	Tracer() trace.Tracer
+}) *AuthorizerRemoteJSON {
 	return &AuthorizerRemoteJSON{
 		c:      c,
+		atr:    d,
 		client: httpx.NewResilientClient(httpx.ResilientClientWithTracer(d.Tracer())).StandardClient(),
 		t:      x.NewTemplate("remote_json"),
 		tracer: d.Tracer(),
@@ -109,6 +129,36 @@ func (a *AuthorizerRemoteJSON) Authorize(r *http.Request, session *authn.Authent
 	if authz != "" {
 		req.Header.Add("Authorization", authz)
 	}
+	if c.SignedPayload != nil {
+		header := c.SignedPayload.Header
+		sharedKey := c.SignedPayload.SharedKey
+		jwksUrl := c.SignedPayload.JWKSURL
+
+		if (sharedKey != "") == (jwksUrl != "") {
+			return errors.Wrap(err, "exactly one of hmac.shared_key or hmac.jwks_url must be specified")
+		}
+
+		if sharedKey != "" {
+			sig := sign(body.Bytes(), []byte(sharedKey))
+			if header == "" {
+				header = "X-Request-Signature"
+			}
+			req.Header.Add(header, sig)
+		} else if jwksUrl != "" {
+			if jwks, err := urlx.Parse(jwksUrl); err != nil {
+				return errors.WithStack(err)
+			} else if sig, keyId, err := a.atr.CredentialsSigner().SignPayload(r.Context(), jwks, body.String()); err != nil {
+				return errors.WithStack(err)
+			} else {
+				if header == "" {
+					header = "X-Jwks-Signature"
+				}
+				req.Header.Add(header, sig)
+				kidHeader := fmt.Sprintf("%s-Kid", header)
+				req.Header.Add(kidHeader, keyId)
+			}
+		}
+	}
 
 	for hdr, templateString := range c.Headers {
 		var tmpl *template.Template
@@ -153,6 +203,13 @@ func (a *AuthorizerRemoteJSON) Authorize(r *http.Request, session *authn.Authent
 	}
 
 	return nil
+}
+
+func sign(msg, key []byte) string {
+	mac := hmac.New(sha256.New, key)
+	mac.Write(msg)
+
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // Validate implements the Authorizer interface.

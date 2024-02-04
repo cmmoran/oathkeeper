@@ -186,6 +186,23 @@
           },
           "title": "Only Cookies",
           "description": "A list of possible cookies to look for on incoming requests, and will fallthrough to the next authenticator if none of the passed cookies are set on the request."
+        },
+        "preserve_path": {
+          "title": "Preserve Path",
+          "type": "boolean",
+          "description": "When set to true, any path specified in `check_session_url` will be preserved instead of overwriting the path with the path from the original request"
+        },
+        "extra_from": {
+          "title": "Extra JSON Path",
+          "description": "The `extra` field in the ORY Oathkeeper authentication session is set using this JSON Path. Defaults to `extra`, and could be `@this` (for the root element), `foo.bar` (for key foo.bar), or any other valid GJSON path. See [GSJON Syntax](https://github.com/tidwall/gjson/blob/master/SYNTAX.md) for reference.",
+          "type": "string",
+          "default": "extra"
+        },
+        "subject_from": {
+          "title": "Subject JSON Path",
+          "description": "The `subject` field in the ORY Oathkeeper authentication session is set using this JSON Path. Defaults to `subject`. See [GSJON Syntax](https://github.com/tidwall/gjson/blob/master/SYNTAX.md) for reference.",
+          "type": "string",
+          "default": "subject"
         }
       },
       "required": ["check_session_url"],
@@ -431,6 +448,57 @@
         }
       },
       "required": ["base_url", "required_action", "required_resource"],
+      "additionalProperties": false
+    },
+    "configAuthorizersRemoteJSON": {
+      "type": "object",
+      "title": "Remote JSON Configuration",
+      "description": "This section is optional when the authorizer is disabled.",
+      "properties": {
+        "remote": {
+          "title": "Remote Authorizer URL",
+          "type": "string",
+          "format": "uri",
+          "description": "The URL of the remote authorizer. The remote authorizer is expected to return either 200 OK or 403 Forbidden to allow/deny access.\n\n>If this authorizer is enabled, this value is required.",
+          "examples": ["https://host/path"]
+        },
+        "payload": {
+          "title": "JSON Payload",
+          "type": "string",
+          "description": "The JSON payload of the request sent to the remote authorizer. The string will be parsed by the Go text/template package and applied to an AuthenticationSession object.\n\n>If this authorizer is enabled, this value is required.",
+          "examples": ["{\"subject\":\"{{ .Subject }}\"}"]
+        },
+        "signed_payload": {
+          "title": "Sign payload and set the signature to a named header",
+          "default": null,
+          "properties": {
+            "header": {
+              "title": "Header to contain the payload signature (base64)",
+              "type": "string",
+              "description": "The name of the request header that will be populated with the signature of the payload that will be sent to the authorizer",
+              "examples": ["X-Request-Signature", "X-Jwks-Signature"]
+            },
+            "shared_key": {
+              "title": "Shared key to use to sign the payload. (Cannot be set along with 'jwks_url')",
+              "type": "string",
+              "description": "The shared key to use to sign the payload to generate an HMAC signature of the payload",
+              "examples": ["47ac7a07-b504-458d-a081-c80da1cfe6cd"]
+            },
+            "jwks_url": {
+              "type": "string",
+              "format": "uri",
+              "title": "JSON Web Key URL (Cannot be set along with 'shared_key')",
+              "description": "Sets the URL where keys should be fetched from. Supports remote locations (http, https) as well as local filesystem paths.\n.",
+              "examples": [
+                "https://fetch-keys/from/this/location.json",
+                "file:///from/this/absolute/location.json",
+                "file://../from/this/relative/location.json"
+              ]
+            }
+          }
+        }
+      },
+      "required": ["remote", "payload"],
       "additionalProperties": false
     },
     "configMutatorsCookie": {

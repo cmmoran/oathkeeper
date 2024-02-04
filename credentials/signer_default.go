@@ -48,6 +48,29 @@ func (s *DefaultSigner) Sign(ctx context.Context, location *url.URL, claims jwt.
 	return signed, nil
 }
 
+func (s *DefaultSigner) SignPayload(ctx context.Context, location *url.URL, payload string) (string, string, error) {
+	var (
+		key  *jose.JSONWebKey
+		sign string
+		err  error
+	)
+
+	if key, _, err = s.key(ctx, location); err != nil {
+		return "", "", err
+	}
+
+	method := jwt.GetSigningMethod(key.Algorithm)
+	if method == nil {
+		return "", "", errors.Errorf(`credentials: signing key "%s" declares unsupported algorithm "%s"`, key.KeyID, key.Algorithm)
+	}
+
+	if sign, err = method.Sign(payload, key.Key); err != nil {
+		return "", "", err
+	}
+
+	return sign, key.KeyID, nil
+}
+
 func (s *DefaultSigner) key(ctx context.Context, location *url.URL) (*jose.JSONWebKey, string, error) {
 	keys, err := s.r.CredentialsFetcher().ResolveSets(ctx, []url.URL{*location})
 	if err != nil {
