@@ -10,12 +10,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/ory/oathkeeper/credentials"
-	"github.com/ory/x/urlx"
 	"net/http"
 	"text/template"
 	"time"
 
+	"github.com/ory/oathkeeper/credentials"
 	"github.com/pkg/errors"
 
 	"github.com/ory/x/httpx"
@@ -129,34 +128,13 @@ func (a *AuthorizerRemoteJSON) Authorize(r *http.Request, session *authn.Authent
 	if authz != "" {
 		req.Header.Add("Authorization", authz)
 	}
-	if c.SignedPayload != nil {
+	if c.SignedPayload != nil && len(body.Bytes()) > 0 {
 		header := c.SignedPayload.Header
 		sharedKey := c.SignedPayload.SharedKey
 		jwksUrl := c.SignedPayload.JWKSURL
 
-		if (sharedKey != "") == (jwksUrl != "") {
-			return errors.Wrap(err, "exactly one of hmac.shared_key or hmac.jwks_url must be specified")
-		}
-
-		if sharedKey != "" {
-			sig := sign(body.Bytes(), []byte(sharedKey))
-			if header == "" {
-				header = "X-Request-Signature"
-			}
-			req.Header.Add(header, sig)
-		} else if jwksUrl != "" {
-			if jwks, err := urlx.Parse(jwksUrl); err != nil {
-				return errors.WithStack(err)
-			} else if sig, keyId, err := a.atr.CredentialsSigner().SignPayload(r.Context(), jwks, body.String()); err != nil {
-				return errors.WithStack(err)
-			} else {
-				if header == "" {
-					header = "X-Jwks-Signature"
-				}
-				req.Header.Add(header, sig)
-				kidHeader := fmt.Sprintf("%s-Kid", header)
-				req.Header.Add(kidHeader, keyId)
-			}
+		if err = signPayload(r.Context(), a.atr.CredentialsSigner(), req, body, header, sharedKey, jwksUrl); err != nil {
+			return err
 		}
 	}
 

@@ -5,6 +5,7 @@ package rule
 
 import (
 	"hash/crc64"
+	"strconv"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -86,8 +87,12 @@ func (re *regexpMatchingEngine) FindStringSubmatch(pattern, matchAgainst string)
 	}
 
 	result := []string{}
-	for _, group := range m.Groups()[1:] {
-		result = append(result, group.String())
+	for groupIndex, group := range m.Groups()[1:] {
+		if nameAsInt, err := strconv.Atoi(group.Name); err == nil {
+			if groupIndex+1 == nameAsInt {
+				result = append(result, group.String())
+			}
+		}
 	}
 
 	return result, nil
