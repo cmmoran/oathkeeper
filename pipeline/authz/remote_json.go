@@ -83,6 +83,19 @@ func NewAuthorizerRemoteJSON(c configuration.Provider, d interface {
 	}
 }
 
+// NewAuthorizerRemoteJSONNoop creates a new AuthorizerRemoteJSON.
+func NewAuthorizerRemoteJSONNoop(c configuration.Provider, d interface {
+	Tracer() trace.Tracer
+}) *AuthorizerRemoteJSON {
+	return &AuthorizerRemoteJSON{
+		c:      c,
+		atr:    nil,
+		client: httpx.NewResilientClient(httpx.ResilientClientWithTracer(d.Tracer())).StandardClient(),
+		t:      x.NewTemplate("remote_json"),
+		tracer: d.Tracer(),
+	}
+}
+
 // GetID implements the Authorizer interface.
 func (a *AuthorizerRemoteJSON) GetID() string {
 	return "remote_json"
