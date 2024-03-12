@@ -70,6 +70,19 @@ func NewAuthorizerRemote(c configuration.Provider, d interface {
 	}
 }
 
+// NewAuthorizerRemoteNoop creates a new AuthorizerRemote.
+func NewAuthorizerRemoteNoop(c configuration.Provider, d interface {
+	Tracer() trace.Tracer
+}) *AuthorizerRemote {
+	return &AuthorizerRemote{
+		c:      c,
+		atr:    nil,
+		client: httpx.NewResilientClient(httpx.ResilientClientWithTracer(d.Tracer())).StandardClient(),
+		t:      x.NewTemplate("remote"),
+		tracer: d.Tracer(),
+	}
+}
+
 // GetID implements the Authorizer interface.
 func (a *AuthorizerRemote) GetID() string {
 	return "remote"
