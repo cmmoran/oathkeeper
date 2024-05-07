@@ -366,6 +366,13 @@
             "file:///from/this/absolute/location.json",
             "file://../from/this/relative/location.json"
           ]
+        },
+        "issuer_url": {
+          "type": "string",
+          "format": "uri",
+          "title": "JSON Web Key Issuer",
+          "description": "Sets the url of the issuer issuing this key.\n.",
+          "examples": ["https://example.org/"]
         }
       },
       "additionalProperties": false

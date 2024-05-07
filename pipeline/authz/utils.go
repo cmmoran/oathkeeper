@@ -7,12 +7,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/ory/oathkeeper/credentials"
-	"github.com/ory/x/urlx"
-	"github.com/pkg/errors"
 	"io"
 	"net/http"
 	"net/url"
+
+	"github.com/pkg/errors"
+
+	"github.com/ory/oathkeeper/credentials"
+	"github.com/ory/x/urlx"
 )
 
 func pipeRequestBody(r *http.Request, w io.Writer) error {
@@ -30,7 +32,7 @@ func pipeRequestBody(r *http.Request, w io.Writer) error {
 	return err
 }
 
-func signPayload(ctx context.Context, credSigner credentials.Signer, req *http.Request, body bytes.Buffer, header, sharedKey, jwksUrl string) (err error) {
+func signPayload(ctx context.Context, credSigner credentials.Signer, req *http.Request, body bytes.Buffer, header, sharedKey, jwksUrl, issuer string) (err error) {
 	if (sharedKey != "") == (jwksUrl != "") {
 		return errors.Wrap(err, "exactly one of hmac.shared_key or hmac.jwks_url must be specified")
 	}
@@ -59,6 +61,10 @@ func signPayload(ctx context.Context, credSigner credentials.Signer, req *http.R
 			req.Header.Add(header, sig)
 			kidHeader := fmt.Sprintf("%s-Kid", header)
 			req.Header.Add(kidHeader, keyId)
+			if len(issuer) > 0 {
+				header = "X-Jwks-Issuer"
+				req.Header.Add(header, issuer)
+			}
 		}
 	}
 	return nil
