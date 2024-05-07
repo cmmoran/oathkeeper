@@ -14,8 +14,9 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/ory/oathkeeper/credentials"
 	"github.com/pkg/errors"
+
+	"github.com/ory/oathkeeper/credentials"
 
 	"github.com/ory/x/httpx"
 	"github.com/ory/x/otelx"
@@ -33,6 +34,7 @@ type SignedPayloadRemoteJsonConfiguration struct {
 	Header    string `json:"header"`
 	SharedKey string `json:"shared_key"`
 	JWKSURL   string `json:"jwks_url"`
+	Issuer    string `json:"issuer_url"`
 }
 
 // AuthorizerRemoteJSONConfiguration represents a configuration for the remote_json authorizer.
@@ -145,8 +147,9 @@ func (a *AuthorizerRemoteJSON) Authorize(r *http.Request, session *authn.Authent
 		header := c.SignedPayload.Header
 		sharedKey := c.SignedPayload.SharedKey
 		jwksUrl := c.SignedPayload.JWKSURL
+		issuer := c.SignedPayload.Issuer
 
-		if err = signPayload(r.Context(), a.atr.CredentialsSigner(), req, body, header, sharedKey, jwksUrl); err != nil {
+		if err = signPayload(r.Context(), a.atr.CredentialsSigner(), req, body, header, sharedKey, jwksUrl, issuer); err != nil {
 			return err
 		}
 	}
