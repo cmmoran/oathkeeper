@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/rsa"
+	"encoding/base64"
 	"net/url"
 	"reflect"
 
@@ -50,9 +51,9 @@ func (s *DefaultSigner) Sign(ctx context.Context, location *url.URL, claims jwt.
 
 func (s *DefaultSigner) SignPayload(ctx context.Context, location *url.URL, payload string) (string, string, error) {
 	var (
-		key  *jose.JSONWebKey
-		sign string
-		err  error
+		key   *jose.JSONWebKey
+		signb []byte
+		err   error
 	)
 
 	if key, _, err = s.key(ctx, location); err != nil {
@@ -64,11 +65,11 @@ func (s *DefaultSigner) SignPayload(ctx context.Context, location *url.URL, payl
 		return "", "", errors.Errorf(`credentials: signing key "%s" declares unsupported algorithm "%s"`, key.KeyID, key.Algorithm)
 	}
 
-	if sign, err = method.Sign(payload, key.Key); err != nil {
+	if signb, err = method.Sign(payload, key.Key); err != nil {
 		return "", "", err
 	}
 
-	return sign, key.KeyID, nil
+	return base64.RawURLEncoding.EncodeToString(signb), key.KeyID, nil
 }
 
 func (s *DefaultSigner) key(ctx context.Context, location *url.URL) (*jose.JSONWebKey, string, error) {

@@ -337,7 +337,7 @@ func TestKoanfProvider(t *testing.T) {
 
 		t.Run("authorizer=remote_json", func(t *testing.T) {
 			l := logrusx.New("", "")
-			a := authz.NewAuthorizerRemoteJSON(p, otelx.NewNoop(l, p.TracingConfig()))
+			a := authz.NewAuthorizerRemoteJSONNoop(p, otelx.NewNoop(l, p.TracingConfig()))
 			assert.True(t, p.AuthorizerIsEnabled(a.GetID()))
 			require.NoError(t, a.Validate(nil))
 

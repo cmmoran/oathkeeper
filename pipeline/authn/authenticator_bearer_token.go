@@ -4,8 +4,12 @@
 package authn
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"github.com/ory/oathkeeper/x"
+	"github.com/ory/x/logrusx"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -21,9 +25,33 @@ import (
 	"github.com/ory/x/stringsx"
 )
 
+var log = logrusx.New("ORY Oathkeeper", x.Version, logrusx.ForceFormat("json"))
+
 func init() {
+
 	gjson.AddModifier("this", func(json, arg string) string {
 		return json
+	})
+	gjson.AddModifier("split", func(json, arg string) string {
+		sep := arg[:1]
+		idx, _ := strconv.Atoi(arg[1:])
+		sp := strings.Split(json, sep)
+		if len(sp) < idx+1 {
+			return json
+		}
+
+		return sp[idx]
+	})
+	gjson.AddModifier("b64", func(json, arg string) string {
+		switch arg {
+		case "decode":
+			res, _ := base64.RawURLEncoding.DecodeString(json)
+			return string(res)
+		case "encode":
+			return base64.RawURLEncoding.EncodeToString([]byte(json))
+		default:
+			return base64.RawURLEncoding.EncodeToString([]byte(json))
+		}
 	})
 }
 
@@ -129,7 +157,8 @@ func (a *AuthenticatorBearerToken) Config(config json.RawMessage) (*Authenticato
 func (a *AuthenticatorBearerToken) Authenticate(r *http.Request, session *AuthenticationSession, config json.RawMessage, _ pipeline.Rule) (err error) {
 	ctx, span := a.tracer.Start(r.Context(), "pipeline.authn.AuthenticatorBearerToken.Authenticate")
 	defer otelx.End(span, &err)
-	r = r.WithContext(ctx)
+	*r = *(r.WithContext(ctx))
+	//r = r.WithContext(ctx)
 
 	cf, err := a.Config(config)
 	if err != nil {
@@ -164,5 +193,17 @@ func (a *AuthenticatorBearerToken) Authenticate(r *http.Request, session *Authen
 
 	session.Subject = subject
 	session.Extra = extra
+
+	var corrId string
+	if len(r.Header.Get("x-correlation-id")) > 0 {
+		corrId = r.Header.Get("x-correlation-id")
+	}
+
+	log.
+		WithField("x-correlation-id", corrId).
+		WithField("subject", session.Subject).
+		WithField("extra", session.Extra).
+		Trace("hydrated subject and extra")
+
 	return nil
 }

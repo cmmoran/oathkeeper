@@ -8,13 +8,14 @@ import (
 	"crypto/md5"
 	"encoding/json"
 	"fmt"
+	"github.com/ory/oathkeeper/x"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/dgraph-io/ristretto"
+	"github.com/dgraph-io/ristretto/v2"
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/trace"
@@ -174,7 +175,8 @@ func (a *AuthenticatorOAuth2Introspection) Authenticate(r *http.Request, session
 	tp := trace.SpanFromContext(r.Context()).TracerProvider()
 	ctx, span := tp.Tracer("oauthkeeper/pipeline/authn").Start(r.Context(), "pipeline.authn.AuthenticatorOAuth2Introspection.Authenticate")
 	defer otelx.End(span, &err)
-	r = r.WithContext(ctx)
+	//r = r.WithContext(ctx)
+	*r = *(r.WithContext(ctx))
 
 	cf, client, err := a.Config(config)
 	if err != nil {
@@ -204,6 +206,12 @@ func (a *AuthenticatorOAuth2Introspection) Authenticate(r *http.Request, session
 			return errors.WithStack(err)
 		}
 
+		if cid := r.Header.Get("X-Correlation-ID"); cid != "" {
+			introspectReq.Header.Set("X-Correlation-ID", cid)
+		}
+		if fingerprint := r.Header.Get("X-Session-Entropy"); len(fingerprint) > 0 {
+			introspectReq.Header.Add("X-Session-Entropy", fingerprint)
+		}
 		for key, value := range cf.IntrospectionRequestHeaders {
 			introspectReq.Header.Set(key, value)
 		}
@@ -218,7 +226,9 @@ func (a *AuthenticatorOAuth2Introspection) Authenticate(r *http.Request, session
 		if err != nil {
 			return errors.WithStack(err)
 		}
-		defer resp.Body.Close()
+		defer func() {
+			_ = resp.Body.Close()
+		}()
 
 		if resp.StatusCode != http.StatusOK {
 			return errors.Errorf("Introspection returned status code %d but expected %d", resp.StatusCode, http.StatusOK)
@@ -279,6 +289,16 @@ func (a *AuthenticatorOAuth2Introspection) Authenticate(r *http.Request, session
 
 	session.Subject = i.Subject
 	session.Extra = i.Extra
+	var corrId string
+	if len(r.Header.Get("x-correlation-id")) > 0 {
+		corrId = r.Header.Get("x-correlation-id")
+	}
+
+	log.
+		WithField("x-correlation-id", corrId).
+		WithField("subject", session.Subject).
+		WithField("extra", session.Extra).
+		Trace("hydrated subject and extra")
 
 	return nil
 }
@@ -316,6 +336,16 @@ func (a *AuthenticatorOAuth2Introspection) Config(config json.RawMessage) (*Auth
 
 			if c.PreAuth.Audience != "" {
 				ep = url.Values{"audience": {c.PreAuth.Audience}}
+			}
+
+			if len(c.PreAuth.ClientSecret) > 0 {
+				foc := x.FileOrContent(c.PreAuth.ClientSecret)
+				if foc.IsPath() {
+					a.logger.Debugf("Resolving ClientSecret from %s", foc.String())
+				} else {
+					a.logger.Debug("ClientSecret already raw string")
+				}
+				c.PreAuth.ClientSecret = foc.MustReadString()
 			}
 
 			rt = (&clientcredentials.Config{

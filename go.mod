@@ -2,9 +2,10 @@ module github.com/ory/oathkeeper
 
 go 1.25
 
-replace github.com/mattn/go-sqlite3 => github.com/mattn/go-sqlite3 v1.14.28
-
-replace github.com/ory/x => ./oryx
+replace (
+	github.com/mattn/go-sqlite3 => github.com/mattn/go-sqlite3 v1.14.10
+	github.com/ory/x => ./oryx
+)
 
 require (
 	github.com/Azure/azure-pipeline-go v0.2.2
@@ -180,6 +181,7 @@ require (
 	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
+	github.com/klauspost/compress v1.17.11 // indirect
 	github.com/knadh/koanf/maps v0.1.2 // indirect
 	github.com/knadh/koanf/parsers/json v0.1.0 // indirect
 	github.com/knadh/koanf/parsers/toml v0.1.0 // indirect

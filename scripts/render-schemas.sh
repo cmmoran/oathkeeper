@@ -1,11 +1,12 @@
 #!/bin/sh
 
-set -euxo pipefail
+set -eux pipefail
 
-schema_version="$(git rev-parse --short HEAD)"
+ory_x_version="$(go list -f '{{.Version}}' -m github.com/ory/x)"
+cmmoran_ory_x_version="$(go list -f '{{.Replace.Version}}' -m github.com/ory/x | cut -d '-' -f3)"
 
-sed "s!ory://tracing-config!https://raw.githubusercontent.com/ory/oathkeeper/$schema_version/oryx/otelx/config.schema.json!g;
-s!ory://logging-config!https://raw.githubusercontent.com/ory/oathkeeper/$schema_version/oryx/logrusx/config.schema.json!g;
+sed "s!ory://tracing-config!https://raw.githubusercontent.com/cmmoran/ory-x/$cmmoran_ory_x_version/otelx/config.schema.json!g;
+s!ory://logging-config!https://raw.githubusercontent.com/ory/x/$ory_x_version/logrusx/config.schema.json!g;
 s!/.schema/config.schema.json!https://github.com/ory/oathkeeper/schema/config.schema.json!g" spec/config.schema.json > .schema/config.schema.json
 
-git commit --author="ory-bot <60093411+ory-bot@users.noreply.github.com>" -m "autogen: render config schema" .schema/config.schema.json || true
+#git commit --author="ory-bot <60093411+ory-bot@users.noreply.github.com>" -m "autogen: render config schema" .schema/config.schema.json || true

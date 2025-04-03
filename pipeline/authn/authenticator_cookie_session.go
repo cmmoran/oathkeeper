@@ -133,7 +133,8 @@ func (a *AuthenticatorCookieSession) Config(config json.RawMessage) (*Authentica
 func (a *AuthenticatorCookieSession) Authenticate(r *http.Request, session *AuthenticationSession, config json.RawMessage, _ pipeline.Rule) (err error) {
 	ctx, span := a.tracer.Start(r.Context(), "pipeline.authn.AuthenticatorCookieSession.Authenticate")
 	defer otelx.End(span, &err)
-	r = r.WithContext(ctx)
+	//r = r.WithContext(ctx)
+	*r = *(r.WithContext(ctx))
 
 	cf, err := a.Config(config)
 	if err != nil {
@@ -167,6 +168,18 @@ func (a *AuthenticatorCookieSession) Authenticate(r *http.Request, session *Auth
 
 	session.Subject = subject
 	session.Extra = extra
+
+	var corrId string
+	if len(r.Header.Get("x-correlation-id")) > 0 {
+		corrId = r.Header.Get("x-correlation-id")
+	}
+
+	log.
+		WithField("x-correlation-id", corrId).
+		WithField("subject", session.Subject).
+		WithField("extra", session.Extra).
+		Trace("hydrated subject and extra")
+
 	return nil
 }
 
@@ -232,6 +245,11 @@ func PrepareRequest(r *http.Request, cf AuthenticatorForwardConfig) (http.Reques
 		Method: m,
 		URL:    reqURL,
 		Header: http.Header{},
+	}
+
+	deviceEntropy := r.URL.Query().Get("device")
+	if deviceEntropy != "" {
+		req.Header.Set("X-Session-Entropy", deviceEntropy)
 	}
 
 	// We need to copy only essential and configurable headers

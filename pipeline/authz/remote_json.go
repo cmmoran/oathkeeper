@@ -10,6 +10,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/ory/x/logrusx"
+	"github.com/sirupsen/logrus"
 	"net/http"
 	"text/template"
 	"time"
@@ -29,6 +31,8 @@ import (
 	"github.com/ory/oathkeeper/pipeline/authn"
 	"github.com/ory/oathkeeper/x"
 )
+
+var log = logrusx.New("ORY Oathkeeper", x.Version, logrusx.ForceFormat("json"))
 
 type SignedPayloadRemoteJsonConfiguration struct {
 	Header    string `json:"header"`
@@ -107,7 +111,12 @@ func (a *AuthorizerRemoteJSON) GetID() string {
 func (a *AuthorizerRemoteJSON) Authorize(r *http.Request, session *authn.AuthenticationSession, config json.RawMessage, rl pipeline.Rule) (err error) {
 	ctx, span := a.tracer.Start(r.Context(), "pipeline.authz.AuthorizerRemoteJSON.Authorize")
 	defer otelx.End(span, &err)
-	r = r.WithContext(ctx)
+	*r = *(r.WithContext(ctx))
+
+	var corrId string
+	if len(r.Header.Get("x-correlation-id")) > 0 {
+		corrId = r.Header.Get("x-correlation-id")
+	}
 
 	c, err := a.Config(config)
 	if err != nil {
@@ -139,16 +148,30 @@ func (a *AuthorizerRemoteJSON) Authorize(r *http.Request, session *authn.Authent
 		return errors.WithStack(err)
 	}
 	req.Header.Add("Content-Type", "application/json")
+	if len(corrId) > 0 {
+		req.Header.Add("X-Correlation-ID", corrId)
+	}
+	if fingerprint := r.Header.Get("X-Session-Entropy"); len(fingerprint) > 0 {
+		req.Header.Add("X-Session-Entropy", fingerprint)
+	}
 	authz := r.Header.Get("Authorization")
 	if authz != "" {
 		req.Header.Add("Authorization", authz)
 	}
+
 	if c.SignedPayload != nil && len(body.Bytes()) > 0 {
 		header := c.SignedPayload.Header
 		sharedKey := c.SignedPayload.SharedKey
 		jwksUrl := c.SignedPayload.JWKSURL
 		issuer := c.SignedPayload.Issuer
 
+		log.WithFields(logrus.Fields{
+			"x-correlation-id": corrId,
+			"header":           header,
+			"jwksUrl":          jwksUrl,
+			"issuer":           issuer,
+			"body":             string(body.Bytes()),
+		}).Trace("signing body payload (remote_json)")
 		if err = signPayload(r.Context(), a.atr.CredentialsSigner(), req, body, header, sharedKey, jwksUrl, issuer); err != nil {
 			return err
 		}
@@ -180,11 +203,19 @@ func (a *AuthorizerRemoteJSON) Authorize(r *http.Request, session *authn.Authent
 		req.Header.Set(hdr, headerValue.String())
 	}
 
-	res, err := a.client.Do(req.WithContext(r.Context()))
+	log.WithFields(logrus.Fields{
+		"x-correlation-id": corrId,
+		"header":           req.Header,
+		"payload":          string(body.Bytes()),
+	}).Trace("issuing remote_json authorizer call")
+
+	res, err := a.client.Do(req)
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	defer res.Body.Close()
+	defer func() {
+		_ = res.Body.Close()
+	}()
 
 	if res.StatusCode == http.StatusForbidden {
 		return errors.WithStack(helper.ErrForbidden)
