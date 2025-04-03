@@ -1,5 +1,5 @@
 {
-  "$id": "/.schema/config.schema.json",
+  "$id": "https://github.com/ory/oathkeeper/schema/config.schema.json",
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "ORY Oathkeeper Configuration",
   "type": "object",
@@ -942,9 +942,9 @@
             },
             "max_cost": {
               "type": "integer",
-              "default": 1000,
+              "default": 100000000,
               "title": "Max Cost",
-              "description": "Max number of tokens to cache."
+              "description": "Max cost to cache."
             }
           }
         }
@@ -1915,10 +1915,10 @@
       }
     },
     "log": {
-      "$ref": "https://raw.githubusercontent.com/ory/x/v0.0.605/logrusx/config.schema.json"
+      "$ref": "https://raw.githubusercontent.com/ory/x/v0.0.705/logrusx/config.schema.json"
     },
     "tracing": {
-      "$ref": "https://raw.githubusercontent.com/ory/x/v0.0.605/tracing/config.schema.json"
+      "$ref": "https://raw.githubusercontent.com/cmmoran/ory-x/5630955b8f94/otelx/config.schema.json"
     },
     "profiling": {
       "title": "Profiling",

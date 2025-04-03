@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/golang-jwt/jwt/v4"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel/trace"
 
@@ -77,7 +77,8 @@ func (a *AuthenticatorJWT) Config(config json.RawMessage) (*AuthenticatorOAuth2J
 func (a *AuthenticatorJWT) Authenticate(r *http.Request, session *AuthenticationSession, config json.RawMessage, _ pipeline.Rule) (err error) {
 	ctx, span := a.r.Tracer().Start(r.Context(), "pipeline.authn.AuthenticatorJWT.Authenticate")
 	defer otelx.End(span, &err)
-	r = r.WithContext(ctx)
+	*r = *(r.WithContext(ctx))
+	//r = r.WithContext(ctx)
 
 	cf, err := a.Config(config)
 	if err != nil {
@@ -126,11 +127,22 @@ func (a *AuthenticatorJWT) Authenticate(r *http.Request, session *Authentication
 	session.Subject = jwtx.ParseMapStringInterfaceClaims(claims).Subject
 	session.Extra = claims
 
+	var corrId string
+	if len(r.Header.Get("x-correlation-id")) > 0 {
+		corrId = r.Header.Get("x-correlation-id")
+	}
+
+	log.
+		WithField("x-correlation-id", corrId).
+		WithField("subject", session.Subject).
+		WithField("extra", session.Extra).
+		Trace("hydrated subject and extra")
+
 	return nil
 }
 
 func (a *AuthenticatorJWT) tryEnrichResultErr(token string, err *herodot.DefaultError) *herodot.DefaultError {
-	t, _ := jwt.ParseWithClaims(token, jwt.MapClaims{}, nil)
+	t, _ := jwt.ParseWithClaims(token, jwt.MapClaims{}, nil, jwt.WithIssuedAt())
 	if t == nil {
 		return err
 	}

@@ -4,11 +4,11 @@
 package rule
 
 import (
+	"errors"
+	"fmt"
 	"hash/crc64"
 	"strconv"
 	"strings"
-
-	"github.com/pkg/errors"
 
 	"github.com/dlclark/regexp2"
 
@@ -41,7 +41,7 @@ func (re *regexpMatchingEngine) compile(pattern string) error {
 				startDelim = byte('«')
 				endDelim = byte('»')
 			} else {
-				return errors.Errorf("attempted to use regex 'possessive match' or regex 'lookbehind' without changing delimiters from '<...>' to '<<...>>' in: %s", pattern)
+				return errors.New(fmt.Sprintf("attempted to use regex 'possessive match' or regex 'lookbehind' without changing delimiters from '<...>' to '<<...>>' in: %s", pattern))
 			}
 		}
 		compiled, err := compiler.CompileRegex(pattern, startDelim, endDelim)

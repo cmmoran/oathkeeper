@@ -5,8 +5,10 @@ package authz
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/sirupsen/logrus"
 	"io"
 	"net/http"
 	"text/template"
@@ -93,7 +95,12 @@ func (a *AuthorizerRemote) GetID() string {
 func (a *AuthorizerRemote) Authorize(r *http.Request, session *authn.AuthenticationSession, config json.RawMessage, rl pipeline.Rule) (err error) {
 	ctx, span := a.tracer.Start(r.Context(), "pipeline.authz.AuthorizerRemote.Authorize")
 	defer otelx.End(span, &err)
-	r = r.WithContext(ctx)
+	*r = *(r.WithContext(ctx))
+
+	var corrId string
+	if len(r.Header.Get("x-correlation-id")) > 0 {
+		corrId = r.Header.Get("x-correlation-id")
+	}
 
 	c, err := a.Config(config)
 	if err != nil {
@@ -103,15 +110,21 @@ func (a *AuthorizerRemote) Authorize(r *http.Request, session *authn.Authenticat
 	var body bytes.Buffer
 	read, write := io.Pipe()
 	go func() {
-		err := pipeRequestBody(r, io.MultiWriter(write, &body))
-		write.CloseWithError(errors.Wrapf(err, `could not pipe request body in rule "%s"`, rl.GetID()))
+		gerr := pipeRequestBody(r, io.MultiWriter(write, &body))
+		_ = write.CloseWithError(errors.Wrapf(gerr, `could not pipe request body in rule "%s"`, rl.GetID()))
 	}()
 
-	req, err := http.NewRequest("POST", c.Remote, read)
+	req, err := http.NewRequestWithContext(ctx, "POST", c.Remote, read)
 	if err != nil {
 		return errors.WithStack(err)
 	}
 	req.Header.Add("Content-Type", r.Header.Get("Content-Type"))
+	if len(corrId) > 0 {
+		req.Header.Add("X-Correlation-ID", corrId)
+	}
+	if fingerprint := r.Header.Get("X-Session-Entropy"); len(fingerprint) > 0 {
+		req.Header.Add("X-Session-Entropy", fingerprint)
+	}
 	authz := r.Header.Get("Authorization")
 	if authz != "" {
 		req.Header.Add("Authorization", authz)
@@ -149,17 +162,32 @@ func (a *AuthorizerRemote) Authorize(r *http.Request, session *authn.Authenticat
 		jwksUrl := c.SignedPayload.JWKSURL
 		issuer := c.SignedPayload.Issuer
 
+		log.WithFields(logrus.Fields{
+			"x-correlation-id": corrId,
+			"header":           header,
+			"jwksUrl":          jwksUrl,
+			"issuer":           issuer,
+			"body":             base64.RawURLEncoding.EncodeToString(body.Bytes()),
+		}).Trace("signing body payload (remote)")
 		if err = signPayload(r.Context(), a.atr.CredentialsSigner(), req, body, header, sharedKey, jwksUrl, issuer); err != nil {
 			return err
 		}
 	}
 
-	res, err := a.client.Do(req.WithContext(r.Context()))
+	log.WithFields(logrus.Fields{
+		"x-correlation-id": corrId,
+		"header":           req.Header,
+		"url":              req.URL.String(),
+	}).Trace("issuing remote authorizer call")
+
+	res, err := a.client.Do(req)
 
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	defer res.Body.Close()
+	defer func() {
+		_ = res.Body.Close()
+	}()
 
 	if res.StatusCode == http.StatusForbidden {
 		return errors.WithStack(helper.ErrForbidden)
