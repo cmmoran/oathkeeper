@@ -4,6 +4,7 @@
 package reqlog
 
 import (
+	"context"
 	"net/http"
 	"sync"
 	"time"
@@ -115,6 +116,10 @@ func (m *Middleware) WrapFunc(handler http.HandlerFunc) http.HandlerFunc {
 }
 
 func (m *Middleware) ServeHTTP(rw http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+	if len(r.Header) > 0 && r.Header.Get("X-Correlation-ID") != "" {
+		ctx := context.WithValue(r.Context(), "x-correlation-id", r.Header.Get("X-Correlation-ID"))
+		r = r.WithContext(ctx)
+	}
 	if m.Before == nil {
 		m.Before = DefaultBefore
 	}
@@ -138,7 +143,7 @@ func (m *Middleware) ServeHTTP(rw http.ResponseWriter, r *http.Request, next htt
 		remoteAddr = realIP
 	}
 
-	entry := m.Logger.NewEntry()
+	entry := m.Logger.NewEntry().WithField("x-correlation-id", r.Header.Get("X-Correlation-ID"))
 
 	entry = m.Before(entry, r, remoteAddr)
 
