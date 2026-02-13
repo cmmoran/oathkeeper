@@ -37,7 +37,7 @@ type Match struct {
 	// The following regexp example matches all paths of the domain `mydomain.com`: `https://mydomain.com/<.*>`.
 	// The glob equivalent of the above regexp example is `https://mydomain.com/<*>`.
 	URL        string `json:"url"`
-	isComposed bool   `json:"-"`
+	isComposed bool
 }
 
 func (m *Match) GetURL() string       { return m.URL }
@@ -431,8 +431,8 @@ func compileComposedURL(c composedURL) (*composedURLCompiled, error) {
 	globAltSet := make(map[string]struct{})
 	parsedBranchTemplates := make([][]pathSegment, 0)
 	for i, p := range c.Paths {
-		if !strings.HasPrefix(p.Prefix, "/") {
-			return nil, errors.Errorf(`"match.url.paths[%d].prefix" must start with "/"`, i)
+		if p.Prefix != "" && !strings.HasPrefix(p.Prefix, "/") {
+			return nil, errors.Errorf(`"match.url.paths[%d].prefix" must be empty or start with "/"`, i)
 		}
 		if len(p.Branches) == 0 {
 			return nil, errors.Errorf(`"match.url.paths[%d].branches" must not be empty`, i)

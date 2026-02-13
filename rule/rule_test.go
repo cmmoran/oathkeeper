@@ -474,3 +474,42 @@ func TestRule_ComposedURLCompileOrderStable(t *testing.T) {
 	assert.Equal(t, rA.composedRegexpPattern, rB.composedRegexpPattern)
 	assert.Equal(t, rA.composedGlobPattern, rB.composedGlobPattern)
 }
+
+func TestRule_ComposedURLAllowsEmptyPrefix(t *testing.T) {
+	raw := `
+{
+	"id": "123",
+	"description": "description",
+	"match": {
+		"url": {
+			"base": "https://example.com/api/v1",
+			"paths": [{
+				"prefix": "",
+				"branches": [{"path": "/devices/:device_id"}]
+			}],
+			"path_params": [
+				{"name": "device_id", "type": "regex", "value": "[^/]+?"}
+			]
+		},
+		"methods": ["GET"]
+	}
+}
+`
+
+	var r Rule
+	require.NoError(t, json.Unmarshal([]byte(raw), &r))
+
+	matched, err := r.IsMatching(configuration.Glob, "GET", mustParse(t, "https://example.com/api/v1/devices/d1"), ProtocolHTTP)
+	require.NoError(t, err)
+	assert.True(t, matched)
+
+	var rRegexp Rule
+	require.NoError(t, json.Unmarshal([]byte(raw), &rRegexp))
+	matched, err = rRegexp.IsMatching(configuration.Regexp, "GET", mustParse(t, "https://example.com/api/v1/devices/d1"), ProtocolHTTP)
+	require.NoError(t, err)
+	assert.True(t, matched)
+
+	_, named, err := r.ExtractRegexGroups(configuration.Glob, mustParse(t, "https://example.com/api/v1/devices/d1"))
+	require.NoError(t, err)
+	assert.Equal(t, "d1", named["device_id"])
+}
