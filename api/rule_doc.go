@@ -5,7 +5,11 @@ package api
 
 //lint:file-ignore U1000 Used to generate Swagger/OpenAPI definitions.
 
-import "github.com/ory/oathkeeper/rule"
+import (
+	"encoding/json"
+
+	"github.com/ory/oathkeeper/rule"
+)
 
 // A rule
 // swagger:response rule
@@ -54,9 +58,15 @@ type swaggerRuleMatch struct {
 	// request with this field. If a match is found, the rule is considered a partial match.
 	// If the matchesMethods field is satisfied as well, the rule is considered a full match.
 	//
-	// You can use regular expressions in this field to match more than one url. Regular expressions are encapsulated in
-	// brackets < and >. The following example matches all paths of the domain `mydomain.com`: `https://mydomain.com/<.*>`.
-	URL string `json:"url"`
+	// This field supports either:
+	//   - a string URL pattern (existing behavior), or
+	//   - an object describing a compositional URL DSL (compiled to regex internally).
+	//
+	// String form can use regular expressions encapsulated in < and >. Example:
+	// `https://mydomain.com/<.*>`.
+	//
+	// Composed object form currently requires regexp matching strategy.
+	URL json.RawMessage `json:"url"`
 }
 
 // swagger:model ruleHandler
