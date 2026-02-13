@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -33,7 +35,8 @@ type Match struct {
 	// Regular expressions and glob patterns are encapsulated in brackets < and >.
 	// The following regexp example matches all paths of the domain `mydomain.com`: `https://mydomain.com/<.*>`.
 	// The glob equivalent of the above regexp example is `https://mydomain.com/<*>`.
-	URL string `json:"url"`
+	URL        string `json:"url"`
+	isComposed bool   `json:"-"`
 }
 
 func (m *Match) GetURL() string       { return m.URL }
@@ -127,6 +130,34 @@ type Rule struct {
 	Upstream Upstream `json:"upstream"`
 
 	matchingEngine MatchingEngine
+	requiresRegexp bool
+}
+
+type composedURL struct {
+	Base       string             `json:"base"`
+	Paths      []composedURLPath  `json:"paths"`
+	PathParams []composedURLParam `json:"path_params"`
+}
+
+type composedURLPath struct {
+	Prefix   string              `json:"prefix"`
+	Branches []composedURLBranch `json:"branches"`
+}
+
+type composedURLBranch struct {
+	Path string `json:"path"`
+}
+
+type composedURLParam struct {
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Value string `json:"value"`
+}
+
+type pathSegment struct {
+	literal  string
+	param    *composedURLParam
+	optional bool
 }
 
 type Upstream struct {
@@ -182,6 +213,9 @@ func (r *Rule) UnmarshalJSON(raw []byte) error {
 	r.Mutators = rr.Mutators
 	r.Errors = rr.Errors
 	r.Upstream = rr.Upstream
+	if m, ok := rr.Match.(*Match); ok && m.isComposed {
+		r.requiresRegexp = true
+	}
 
 	return nil
 }
@@ -191,10 +225,43 @@ func unmarshalMatch(raw json.RawMessage, v *URLProvider) error {
 	if gjson.Get(string(raw), "full_method").Exists() {
 		// full_method --> grpc matching rule
 		*v = new(MatchGRPC)
-	} else {
-		*v = new(Match)
+		return json.Unmarshal(raw, *v)
 	}
-	return json.Unmarshal(raw, *v)
+
+	var probe struct {
+		Methods []string        `json:"methods"`
+		URL     json.RawMessage `json:"url"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return errors.WithStack(err)
+	}
+
+	if len(probe.URL) == 0 {
+		*v = &Match{Methods: probe.Methods}
+		return nil
+	}
+
+	if probe.URL[0] == '"' {
+		*v = new(Match)
+		return json.Unmarshal(raw, *v)
+	}
+
+	if probe.URL[0] != '{' {
+		return errors.New(`"match.url" must be either a string or an object`)
+	}
+
+	var cu composedURL
+	if err := json.Unmarshal(probe.URL, &cu); err != nil {
+		return errors.WithStack(err)
+	}
+
+	compiled, err := compileComposedURL(cu)
+	if err != nil {
+		return err
+	}
+
+	*v = &Match{Methods: probe.Methods, URL: compiled, isComposed: true}
+	return nil
 }
 
 // GetID returns the rule's ID.
@@ -245,6 +312,9 @@ func ensureMatchingEngine(rule *Rule, strategy configuration.MatchingStrategy) e
 	if rule.matchingEngine != nil {
 		return nil
 	}
+	if rule.requiresRegexp && strategy == configuration.Glob {
+		return errors.WithStack(ErrComposedURLRequiresRegexp)
+	}
 	switch strategy {
 	case configuration.Glob:
 		rule.matchingEngine = new(globMatchingEngine)
@@ -285,4 +355,230 @@ func (r *Rule) ExtractRegexGroups(strategy configuration.MatchingStrategy, u *ur
 	}
 
 	return groups, namedGroups, nil
+}
+
+func compileComposedURL(c composedURL) (string, error) {
+	if strings.TrimSpace(c.Base) == "" {
+		return "", errors.New(`"match.url.base" must not be empty`)
+	}
+	if len(c.Paths) == 0 {
+		return "", errors.New(`"match.url.paths" must not be empty`)
+	}
+
+	paramDefs := make(map[string]composedURLParam, len(c.PathParams))
+	paramUsage := make(map[string]bool, len(c.PathParams))
+	for _, p := range c.PathParams {
+		if p.Name == "" {
+			return "", errors.New(`"match.url.path_params[].name" must not be empty`)
+		}
+		if _, exists := paramDefs[p.Name]; exists {
+			return "", errors.Errorf(`duplicate "match.url.path_params" name: %s`, p.Name)
+		}
+		if p.Type != "regex" {
+			return "", errors.Errorf(`unsupported "match.url.path_params[%s].type": %s`, p.Name, p.Type)
+		}
+		if p.Value == "" {
+			return "", errors.Errorf(`"match.url.path_params[%s].value" must not be empty`, p.Name)
+		}
+		if _, err := regexp.Compile(p.Value); err != nil {
+			return "", errors.Errorf(`invalid regex for "match.url.path_params[%s]": %s`, p.Name, err)
+		}
+		paramDefs[p.Name] = p
+	}
+
+	alts := make([]string, 0)
+	altSet := make(map[string]struct{})
+	parsedBranchTemplates := make([][]pathSegment, 0)
+	for i, p := range c.Paths {
+		if !strings.HasPrefix(p.Prefix, "/") {
+			return "", errors.Errorf(`"match.url.paths[%d].prefix" must start with "/"`, i)
+		}
+		if len(p.Branches) == 0 {
+			return "", errors.Errorf(`"match.url.paths[%d].branches" must not be empty`, i)
+		}
+		for j, b := range p.Branches {
+			if !strings.HasPrefix(b.Path, "/") {
+				return "", errors.Errorf(`"match.url.paths[%d].branches[%d].path" must start with "/"`, i, j)
+			}
+			fullPath := joinPathPrefixAndBranch(p.Prefix, b.Path)
+			segments, used, err := parsePathTemplate(fullPath, paramDefs)
+			if err != nil {
+				return "", errors.Wrapf(err, "invalid composed path at paths[%d].branches[%d]", i, j)
+			}
+			compiledPath := compileSegmentsToRegex(segments)
+			for name := range used {
+				paramUsage[name] = true
+			}
+			if _, dup := altSet[compiledPath]; dup {
+				return "", errors.Errorf(`duplicate composed URL branch expansion detected: %s`, fullPath)
+			}
+			altSet[compiledPath] = struct{}{}
+			alts = append(alts, compiledPath)
+			parsedBranchTemplates = append(parsedBranchTemplates, segments)
+		}
+	}
+
+	if err := detectComposedBranchOverlaps(parsedBranchTemplates); err != nil {
+		return "", err
+	}
+
+	for name := range paramDefs {
+		if !paramUsage[name] {
+			return "", errors.Errorf(`"match.url.path_params[%s]" is declared but never used`, name)
+		}
+	}
+
+	sort.Strings(alts)
+	return fmt.Sprintf(`%s<<(?:%s)$>>`, c.Base, strings.Join(alts, "|")), nil
+}
+
+func joinPathPrefixAndBranch(prefix, branch string) string {
+	if strings.HasSuffix(prefix, "/") {
+		prefix = strings.TrimSuffix(prefix, "/")
+	}
+	return prefix + branch
+}
+
+func parsePathTemplate(path string, paramDefs map[string]composedURLParam) ([]pathSegment, map[string]struct{}, error) {
+	if strings.Contains(path, "?") && !strings.Contains(path, ":") {
+		return nil, nil, errors.New(`"?" is only allowed in parameter segments (e.g. ":id?")`)
+	}
+
+	segments := strings.Split(path, "/")
+	if len(segments) == 0 || segments[0] != "" {
+		return nil, nil, errors.New(`path must be absolute`)
+	}
+
+	used := make(map[string]struct{})
+	result := make([]pathSegment, 0, len(segments)-1)
+	for _, segment := range segments[1:] {
+		if segment == "" {
+			return nil, nil, errors.New(`empty path segments are not allowed`)
+		}
+		if strings.HasPrefix(segment, ":") {
+			optional := strings.HasSuffix(segment, "?")
+			name := strings.TrimPrefix(strings.TrimSuffix(segment, "?"), ":")
+			if name == "" {
+				return nil, nil, errors.New(`parameter name must not be empty`)
+			}
+			if strings.Contains(name, "?") {
+				return nil, nil, errors.Errorf(`invalid optional parameter syntax in segment %q`, segment)
+			}
+			def, ok := paramDefs[name]
+			if !ok {
+				return nil, nil, errors.Errorf(`undefined path parameter: %s`, name)
+			}
+			if _, exists := used[name]; exists {
+				return nil, nil, errors.Errorf(`path parameter %q is used more than once in the same branch`, name)
+			}
+			used[name] = struct{}{}
+			d := def
+			result = append(result, pathSegment{param: &d, optional: optional})
+			continue
+		}
+
+		if strings.Contains(segment, "?") {
+			return nil, nil, errors.Errorf(`"?" is only allowed for parameter segments, got: %s`, segment)
+		}
+		result = append(result, pathSegment{literal: segment})
+	}
+
+	return result, used, nil
+}
+
+func compileSegmentsToRegex(segments []pathSegment) string {
+	var b strings.Builder
+	for _, seg := range segments {
+		if seg.param == nil {
+			b.WriteString("/")
+			b.WriteString(regexp.QuoteMeta(seg.literal))
+			continue
+		}
+
+		if seg.optional {
+			b.WriteString(fmt.Sprintf(`(?:/(?<%s>%s))?`, seg.param.Name, seg.param.Value))
+		} else {
+			b.WriteString(fmt.Sprintf(`/(?<%s>%s)`, seg.param.Name, seg.param.Value))
+		}
+	}
+	return b.String()
+}
+
+func detectComposedBranchOverlaps(templates [][]pathSegment) error {
+	expanded := make([][][]pathSegment, len(templates))
+	for i, tpl := range templates {
+		expanded[i] = expandOptionalSegments(tpl)
+	}
+
+	for i := 0; i < len(expanded); i++ {
+		for j := i + 1; j < len(expanded); j++ {
+			if variantsOverlap(expanded[i], expanded[j]) {
+				return errors.Errorf("composed URL branches overlap and may cause ambiguous rule matching between branch indexes %d and %d", i, j)
+			}
+		}
+	}
+	return nil
+}
+
+func expandOptionalSegments(segments []pathSegment) [][]pathSegment {
+	out := [][]pathSegment{{}}
+	for _, seg := range segments {
+		next := make([][]pathSegment, 0, len(out)*2)
+		if seg.param != nil && seg.optional {
+			for _, cur := range out {
+				withSeg := append(append([]pathSegment{}, cur...), pathSegment{param: seg.param, optional: false})
+				withoutSeg := append([]pathSegment{}, cur...)
+				next = append(next, withSeg, withoutSeg)
+			}
+		} else {
+			for _, cur := range out {
+				next = append(next, append(append([]pathSegment{}, cur...), seg))
+			}
+		}
+		out = next
+	}
+	return out
+}
+
+func variantsOverlap(left, right [][]pathSegment) bool {
+	for _, l := range left {
+		for _, r := range right {
+			if len(l) != len(r) {
+				continue
+			}
+			maybe := true
+			for i := range l {
+				if !segmentsCompatible(l[i], r[i]) {
+					maybe = false
+					break
+				}
+			}
+			if maybe {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func segmentsCompatible(a, b pathSegment) bool {
+	if a.param == nil && b.param == nil {
+		return a.literal == b.literal
+	}
+	if a.param != nil && b.param != nil {
+		// Conservative: two regex params at same segment are considered overlapping.
+		return true
+	}
+	if a.param != nil {
+		return staticMatchesRegex(b.literal, a.param.Value)
+	}
+	return staticMatchesRegex(a.literal, b.param.Value)
+}
+
+func staticMatchesRegex(s, pattern string) bool {
+	re, err := regexp.Compile("^" + pattern + "$")
+	if err != nil {
+		return false
+	}
+	return re.MatchString(s)
 }

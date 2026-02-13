@@ -98,6 +98,14 @@ func (m *RepositoryMemory) Set(ctx context.Context, rules []Rule) error {
 	m.invalidRules = make([]Rule, 0)
 
 	for _, check := range rules {
+		if check.requiresRegexp && m.matchingStrategy == configuration.Glob {
+			err := errors.WithStack(ErrComposedURLRequiresRegexp)
+			m.r.Logger().WithError(err).WithField("rule_id", check.ID).
+				Errorf("A Rule uses an unsupported composed URL with the current matching strategy and all URLs matching this rule will not work. You should resolve this issue now.")
+			m.invalidRules = append(m.invalidRules, check)
+			continue
+		}
+
 		if err := m.r.RuleValidator().Validate(&check); err != nil {
 			m.r.Logger().WithError(err).WithField("rule_id", check.ID).
 				Errorf("A Rule uses a malformed configuration and all URLs matching this rule will not work. You should resolve this issue now.")

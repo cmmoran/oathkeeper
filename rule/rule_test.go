@@ -213,6 +213,43 @@ func TestRule_UnmarshalJSON(t *testing.T) {
 			},
 			err: assert.NoError,
 		},
+		{name: "unmarshal composed HTTP match",
+			json: `
+{
+	"id": "123",
+	"description": "description",
+	"match": {
+		"url": {
+			"base": "https://example.com/api/v1",
+			"paths": [{
+				"prefix": "/agencies/:agency_id",
+				"branches": [
+					{"path": "/devices/:device_id?"},
+					{"path": "/participants/:participant_id?"}
+				]
+			}],
+			"path_params": [
+				{"name": "agency_id", "type": "regex", "value": "[^/]+?"},
+				{"name": "device_id", "type": "regex", "value": "[^/]+?"},
+				{"name": "participant_id", "type": "regex", "value": "[^/]+?"}
+			]
+		},
+		"methods": ["GET"]
+	}
+}
+`,
+			expected: Rule{
+				ID:          "123",
+				Description: "description",
+				Match: &Match{
+					Methods:    []string{"GET"},
+					URL:        `https://example.com/api/v1<<(?:/agencies/(?<agency_id>[^/]+?)/devices(?:/(?<device_id>[^/]+?))?|/agencies/(?<agency_id>[^/]+?)/participants(?:/(?<participant_id>[^/]+?))?)$>>`,
+					isComposed: true,
+				},
+				requiresRegexp: true,
+			},
+			err: assert.NoError,
+		},
 
 		{name: "err on invalid version",
 			json: `
@@ -235,6 +272,32 @@ func TestRule_UnmarshalJSON(t *testing.T) {
 `,
 			err: assert.Error,
 		},
+		{name: "err on overlapping composed match",
+			json: `
+{
+	"id": "123",
+	"description": "description",
+	"match": {
+		"url": {
+			"base": "https://example.com/api/v1",
+			"paths": [{
+				"prefix": "/agencies/:agency_id",
+				"branches": [
+					{"path": "/devices/:device_id?"},
+					{"path": "/devices/self"}
+				]
+			}],
+			"path_params": [
+				{"name": "agency_id", "type": "regex", "value": "[^/]+?"},
+				{"name": "device_id", "type": "regex", "value": "[^/]+?"}
+			]
+		},
+		"methods": ["GET"]
+	}
+}
+`,
+			err: assert.Error,
+		},
 	}
 
 	for _, tc := range tests {
@@ -248,4 +311,34 @@ func TestRule_UnmarshalJSON(t *testing.T) {
 			tc.err(t, err)
 		})
 	}
+}
+
+func TestRule_ComposedURLRejectsGlobStrategy(t *testing.T) {
+	raw := `
+{
+	"id": "123",
+	"description": "description",
+	"match": {
+		"url": {
+			"base": "https://example.com/api/v1",
+			"paths": [{
+				"prefix": "/agencies/:agency_id",
+				"branches": [{"path": "/devices/:device_id?"}]
+			}],
+			"path_params": [
+				{"name": "agency_id", "type": "regex", "value": "[^/]+?"},
+				{"name": "device_id", "type": "regex", "value": "[^/]+?"}
+			]
+		},
+		"methods": ["GET"]
+	}
+}
+`
+	var r Rule
+	require.NoError(t, json.Unmarshal([]byte(raw), &r))
+
+	matched, err := r.IsMatching(configuration.Glob, "GET", mustParse(t, "https://example.com/api/v1/agencies/a1/devices/d1"), ProtocolHTTP)
+	require.Error(t, err)
+	assert.False(t, matched)
+	assert.ErrorIs(t, err, ErrComposedURLRequiresRegexp)
 }
