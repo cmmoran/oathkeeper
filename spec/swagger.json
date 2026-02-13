@@ -421,7 +421,7 @@
           }
         },
         "url": {
-          "description": "This field represents the URL pattern this rule matches. It supports either a string URL pattern (existing behavior) or an object describing a compositional URL DSL that is compiled to regex internally.\n\nString form can use regular expressions in brackets \u003c and \u003e (for example `https://mydomain.com/\u003c.*\u003e`). Composed object form currently requires regexp matching strategy."
+          "description": "This field represents the URL pattern this rule matches. It supports either a string URL pattern (existing behavior) or an object describing a compositional URL DSL that is compiled internally for regexp and glob strategies.\n\nString form can use regular expressions in brackets \u003c and \u003e (for example `https://mydomain.com/\u003c.*\u003e`)."
         }
       }
     },

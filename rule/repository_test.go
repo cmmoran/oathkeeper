@@ -154,14 +154,14 @@ func TestRepository(t *testing.T) {
 	}
 }
 
-func TestRepository_ComposedURLRejectedOnGlobStrategy(t *testing.T) {
+func TestRepository_ComposedURLAcceptedOnGlobStrategy(t *testing.T) {
 	mr := &mockRepositoryRegistry{v: validatorNoop{ret: nil}}
 	repo := NewRepositoryMemory(mr)
 	require.NoError(t, repo.SetMatchingStrategy(context.Background(), configuration.Glob))
 
 	r := Rule{
-		ID:             "composed",
-		requiresRegexp: true,
+		ID:               "composed",
+		requiresComposed: true,
 		Match: &Match{
 			Methods: []string{"GET"},
 			URL:     "https://example.com/api/v1<<.*>>",
@@ -169,9 +169,9 @@ func TestRepository_ComposedURLRejectedOnGlobStrategy(t *testing.T) {
 	}
 
 	require.NoError(t, repo.Set(context.Background(), []Rule{r}))
-	assert.Equal(t, 1, mr.loggerCalled)
+	assert.Equal(t, 0, mr.loggerCalled)
 
-	_, err := repo.Get(context.Background(), r.ID)
-	require.Error(t, err)
-	assert.Error(t, repo.ReadyChecker(new(http.Request)))
+	got, err := repo.Get(context.Background(), r.ID)
+	require.NoError(t, err)
+	assert.Equal(t, r.ID, got.ID)
 }

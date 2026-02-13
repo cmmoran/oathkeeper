@@ -14,10 +14,9 @@ const polynomial = crc64.ECMA
 
 // common errors for MatchingEngine.
 var (
-	ErrUnbalancedPattern         = errors.New("unbalanced pattern")
-	ErrMethodNotImplemented      = errors.New("the method is not implemented")
-	ErrUnknownMatchingStrategy   = errors.New("unknown matching strategy")
-	ErrComposedURLRequiresRegexp = errors.New("composed match.url requires access_rules.matching_strategy=regexp")
+	ErrUnbalancedPattern       = errors.New("unbalanced pattern")
+	ErrMethodNotImplemented    = errors.New("the method is not implemented")
+	ErrUnknownMatchingStrategy = errors.New("unknown matching strategy")
 )
 
 // MatchingEngine describes an interface of matching engine such as regexp or glob.

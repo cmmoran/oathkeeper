@@ -60,12 +60,11 @@ type swaggerRuleMatch struct {
 	//
 	// This field supports either:
 	//   - a string URL pattern (existing behavior), or
-	//   - an object describing a compositional URL DSL (compiled to regex internally).
+	//   - an object describing a compositional URL DSL (compiled internally for regexp and glob strategies).
 	//
 	// String form can use regular expressions encapsulated in < and >. Example:
 	// `https://mydomain.com/<.*>`.
 	//
-	// Composed object form currently requires regexp matching strategy.
 	URL json.RawMessage `json:"url"`
 }
 
