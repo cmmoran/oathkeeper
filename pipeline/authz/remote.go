@@ -62,15 +62,16 @@ type AuthorizerRemote struct {
 }
 
 // NewAuthorizerRemote creates a new AuthorizerRemote.
-func NewAuthorizerRemote(c configuration.Provider, d interface {
-	AuthorizerTokenRegistry
-	Tracer() trace.Tracer
-}) *AuthorizerRemote {
+func NewAuthorizerRemote(c configuration.Provider, d interface{ Tracer() trace.Tracer }) *AuthorizerRemote {
 	client := httpx.NewResilientClient().StandardClient()
 	client.Transport = otelhttp.NewTransport(client.Transport)
+	var atr AuthorizerTokenRegistry
+	if registry, ok := d.(AuthorizerTokenRegistry); ok {
+		atr = registry
+	}
 	return &AuthorizerRemote{
 		c:      c,
-		atr:    d,
+		atr:    atr,
 		client: client,
 		t:      x.NewTemplate("remote"),
 		tracer: d.Tracer(),
@@ -162,7 +163,7 @@ func (a *AuthorizerRemote) Authorize(r *http.Request, session *authn.Authenticat
 		req.Header.Set(hdr, headerValue.String())
 	}
 
-	if c.SignedPayload != nil && len(body.Bytes()) > 0 {
+	if c.SignedPayload != nil && a.atr != nil && len(body.Bytes()) > 0 {
 		header := c.SignedPayload.Header
 		sharedKey := c.SignedPayload.SharedKey
 		jwksUrl := c.SignedPayload.JWKSURL
