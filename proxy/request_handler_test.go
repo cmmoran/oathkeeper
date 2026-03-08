@@ -458,13 +458,15 @@ func TestInitializeSession(t *testing.T) {
 			ruleMatch: rule.Match{
 				URL: "http://localhost",
 			},
-			expectContext: authn.MatchContext{
-				RegexpCaptureGroups: []string{},
-				URL:                 x.ParseURLOrPanic("http://localhost"),
-				Method:              "GET",
-				Header:              TestHeader,
+				expectContext: authn.MatchContext{
+					RegexpCaptureGroups:      []string{},
+					RegexpNamedCaptureGroups: map[string]string{},
+					URL:                      x.ParseURLOrPanic("http://localhost"),
+					Method:                   "GET",
+					Header:                   TestHeader,
+					Extra:                    map[string]interface{}{"rule_id": ""},
+				},
 			},
-		},
 		{
 			d:                "Rule with one capture",
 			r:                newTestRequest("http://localhost/user"),
@@ -472,13 +474,15 @@ func TestInitializeSession(t *testing.T) {
 			ruleMatch: rule.Match{
 				URL: "http://localhost/<.*>",
 			},
-			expectContext: authn.MatchContext{
-				RegexpCaptureGroups: []string{"user"},
-				URL:                 x.ParseURLOrPanic("http://localhost/user"),
-				Method:              "GET",
-				Header:              TestHeader,
+				expectContext: authn.MatchContext{
+					RegexpCaptureGroups:      []string{"user"},
+					RegexpNamedCaptureGroups: map[string]string{"1": "user"},
+					URL:                      x.ParseURLOrPanic("http://localhost/user"),
+					Method:                   "GET",
+					Header:                   TestHeader,
+					Extra:                    map[string]interface{}{"rule_id": ""},
+				},
 			},
-		},
 		{
 			d:                "Request with query params",
 			r:                newTestRequest("http://localhost/user?param=test"),
@@ -486,13 +490,15 @@ func TestInitializeSession(t *testing.T) {
 			ruleMatch: rule.Match{
 				URL: "http://localhost/<.*>",
 			},
-			expectContext: authn.MatchContext{
-				RegexpCaptureGroups: []string{"user"},
-				URL:                 x.ParseURLOrPanic("http://localhost/user?param=test"),
-				Method:              "GET",
-				Header:              TestHeader,
+				expectContext: authn.MatchContext{
+					RegexpCaptureGroups:      []string{"user"},
+					RegexpNamedCaptureGroups: map[string]string{"1": "user"},
+					URL:                      x.ParseURLOrPanic("http://localhost/user?param=test"),
+					Method:                   "GET",
+					Header:                   TestHeader,
+					Extra:                    map[string]interface{}{"rule_id": ""},
+				},
 			},
-		},
 		{
 			d:                "Rule with 2 captures",
 			r:                newTestRequest("http://localhost/user?param=test"),
@@ -500,13 +506,15 @@ func TestInitializeSession(t *testing.T) {
 			ruleMatch: rule.Match{
 				URL: "<http|https>://localhost/<.*>",
 			},
-			expectContext: authn.MatchContext{
-				RegexpCaptureGroups: []string{"http", "user"},
-				URL:                 x.ParseURLOrPanic("http://localhost/user?param=test"),
-				Method:              "GET",
-				Header:              TestHeader,
+				expectContext: authn.MatchContext{
+					RegexpCaptureGroups:      []string{"http", "user"},
+					RegexpNamedCaptureGroups: map[string]string{"1": "http", "2": "user"},
+					URL:                      x.ParseURLOrPanic("http://localhost/user?param=test"),
+					Method:                   "GET",
+					Header:                   TestHeader,
+					Extra:                    map[string]interface{}{"rule_id": ""},
+				},
 			},
-		},
 		{
 			d:                "Rule with Glob matching strategy",
 			r:                newTestRequest("http://localhost/user?param=test"),
@@ -514,13 +522,15 @@ func TestInitializeSession(t *testing.T) {
 			ruleMatch: rule.Match{
 				URL: "<http|https>://localhost/<*>",
 			},
-			expectContext: authn.MatchContext{
-				RegexpCaptureGroups: []string{},
-				URL:                 x.ParseURLOrPanic("http://localhost/user?param=test"),
-				Method:              "GET",
-				Header:              TestHeader,
+				expectContext: authn.MatchContext{
+					RegexpCaptureGroups:      []string{},
+					RegexpNamedCaptureGroups: map[string]string{},
+					URL:                      x.ParseURLOrPanic("http://localhost/user?param=test"),
+					Method:                   "GET",
+					Header:                   TestHeader,
+					Extra:                    map[string]interface{}{"rule_id": ""},
+				},
 			},
-		},
 	} {
 		t.Run(fmt.Sprintf("case=%d/description=%s", k, tc.d), func(t *testing.T) {
 
