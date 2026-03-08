@@ -1,0 +1,10 @@
+- op: replace
+  path: /components/schemas/ruleMatch/properties/url
+  value:
+    description: |-
+      This field represents the URL pattern this rule matches. It supports either a string URL pattern
+      (existing behavior) or an object describing a compositional URL DSL that is supported only
+      when access_rules.matching_strategy is set to regexp.
+    oneOf:
+      - type: string
+      - type: object

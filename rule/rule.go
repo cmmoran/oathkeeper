@@ -218,30 +218,30 @@ func (r *Rule) UnmarshalJSON(raw []byte) error {
 	r.Mutators = rr.Mutators
 	r.Errors = rr.Errors
 	r.Upstream = rr.Upstream
-		if m, ok := rr.Match.(*Match); ok && m.isComposed {
-			r.requiresComposed = true
-			var rawMatch struct {
-				URL json.RawMessage `json:"url"`
-			}
+	if m, ok := rr.Match.(*Match); ok && m.isComposed {
+		r.requiresComposed = true
+		var rawMatch struct {
+			URL json.RawMessage `json:"url"`
+		}
 		if err := json.Unmarshal(rr.RawMatch, &rawMatch); err != nil {
 			return errors.WithStack(err)
 		}
 		var cu composedURL
-			if err := json.Unmarshal(rawMatch.URL, &cu); err != nil {
-				return errors.WithStack(err)
-			}
-			compiled, err := compileComposedURL(cu)
-			if err != nil {
-				return err
-			}
-			r.composedRegexpPattern = compiled.RegexpPattern
-			r.composedGlobPattern = compiled.GlobPattern
-			var compact bytes.Buffer
-			if err := json.Compact(&compact, rawMatch.URL); err != nil {
-				return errors.WithStack(err)
-			}
-			r.composedRawURL = append(json.RawMessage(nil), compact.Bytes()...)
+		if err := json.Unmarshal(rawMatch.URL, &cu); err != nil {
+			return errors.WithStack(err)
 		}
+		compiled, err := compileComposedURL(cu)
+		if err != nil {
+			return err
+		}
+		r.composedRegexpPattern = compiled.RegexpPattern
+		r.composedGlobPattern = compiled.GlobPattern
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, rawMatch.URL); err != nil {
+			return errors.WithStack(err)
+		}
+		r.composedRawURL = append(json.RawMessage(nil), compact.Bytes()...)
+	}
 
 	return nil
 }
@@ -351,21 +351,11 @@ func (r *Rule) IsMatching(strategy configuration.MatchingStrategy, method string
 	}
 
 	matchAgainst := fmt.Sprintf("%s://%s%s", u.Scheme, u.Host, u.Path)
-	pattern := r.Match.GetURL()
 	if strategy == configuration.Glob && r.requiresComposed {
-		// Composed URLs are compiled to a canonical regexp as the source of truth.
-		// For glob strategy we still evaluate against that regexp to preserve segment
-		// semantics (for example dots in a single path segment) and named captures.
-		re := new(regexpMatchingEngine)
-		return re.IsMatching(r.composedRegexpPattern, matchAgainst)
+		// Composed match.url is intentionally regexp-only to avoid strategy ambiguity.
+		return false, nil
 	}
-	if strategy == configuration.Glob && isComposedCompiledPattern(pattern) {
-		// Backward compatibility for previously persisted composed rules that were
-		// serialized as compiled regexp strings.
-		re := new(regexpMatchingEngine)
-		return re.IsMatching(pattern, matchAgainst)
-	}
-	return r.matchingEngine.IsMatching(pattern, matchAgainst)
+	return r.matchingEngine.IsMatching(r.Match.GetURL(), matchAgainst)
 }
 
 // ReplaceAllString searches the input string and replaces each match (with the rule's pattern)
@@ -420,30 +410,7 @@ func (r *Rule) ExtractRegexGroups(strategy configuration.MatchingStrategy, u *ur
 
 	matchAgainst := fmt.Sprintf("%s://%s%s", u.Scheme, u.Host, u.Path)
 	if strategy == configuration.Glob && r.requiresComposed {
-		re := new(regexpMatchingEngine)
-		if groups, err = re.FindStringSubmatch(r.composedRegexpPattern, matchAgainst); err != nil {
-			return nil, nil, err
-		}
-		if namedGroups, err = re.FindNamedStringSubmatch(r.composedRegexpPattern, matchAgainst); err != nil {
-			if groups != nil {
-				return groups, nil, err
-			}
-			return nil, nil, err
-		}
-		return groups, namedGroups, nil
-	}
-	if strategy == configuration.Glob && isComposedCompiledPattern(r.Match.GetURL()) {
-		re := new(regexpMatchingEngine)
-		if groups, err = re.FindStringSubmatch(r.Match.GetURL(), matchAgainst); err != nil {
-			return nil, nil, err
-		}
-		if namedGroups, err = re.FindNamedStringSubmatch(r.Match.GetURL(), matchAgainst); err != nil {
-			if groups != nil {
-				return groups, nil, err
-			}
-			return nil, nil, err
-		}
-		return groups, namedGroups, nil
+		return []string{}, map[string]string{}, nil
 	}
 
 	if groups, err = r.matchingEngine.FindStringSubmatch(r.Match.GetURL(), matchAgainst); err != nil {
@@ -458,10 +425,6 @@ func (r *Rule) ExtractRegexGroups(strategy configuration.MatchingStrategy, u *ur
 	}
 
 	return groups, namedGroups, nil
-}
-
-func isComposedCompiledPattern(pattern string) bool {
-	return strings.Contains(pattern, "<<") && strings.Contains(pattern, ">>")
 }
 
 type composedURLCompiled struct {

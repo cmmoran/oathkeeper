@@ -237,7 +237,7 @@
             "type": "array"
           },
           "url": {
-            "description": "This field represents the URL pattern this rule matches. It supports either a string URL pattern (existing behavior) or an object describing a compositional URL DSL that is compiled to regex internally.\n\nString form can use regular expressions in brackets \u003c and \u003e (for example `https://mydomain.com/\u003c.*\u003e`). Composed object form currently requires regexp matching strategy.",
+            "description": "This field represents the URL pattern this rule matches. It supports either a string URL pattern\n(existing behavior) or an object describing a compositional URL DSL that is supported only\nwhen access_rules.matching_strategy is set to regexp.",
             "oneOf": [
               {
                 "type": "string"

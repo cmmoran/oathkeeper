@@ -71,6 +71,7 @@ sdk: .bin/swagger .bin/ory node_modules
 			--health-path-tags metadata \
 			-p https://raw.githubusercontent.com/ory/x/master/healthx/openapi/patch.yaml \
 			-p file://.schema/openapi/patches/meta.yaml \
+			-p file://.schema/openapi/patches/rule-match-url.yaml \
 			spec/swagger.json spec/api.json
 
 	swagger generate client -f ./spec/swagger.json -t internal/httpclient -A Ory_Oathkeeper

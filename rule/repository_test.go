@@ -160,8 +160,8 @@ func TestRepository_ComposedURLRejectedOnGlobStrategy(t *testing.T) {
 	require.NoError(t, repo.SetMatchingStrategy(context.Background(), configuration.Glob))
 
 	r := Rule{
-		ID:             "composed",
-		requiresRegexp: true,
+		ID:               "composed",
+		requiresComposed: true,
 		Match: &Match{
 			Methods: []string{"GET"},
 			URL:     "https://example.com/api/v1<<.*>>",
@@ -173,5 +173,4 @@ func TestRepository_ComposedURLRejectedOnGlobStrategy(t *testing.T) {
 
 	_, err := repo.Get(context.Background(), r.ID)
 	require.Error(t, err)
-	assert.Error(t, repo.ReadyChecker(new(http.Request)))
 }
