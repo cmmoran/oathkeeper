@@ -238,18 +238,21 @@ func TestRule_UnmarshalJSON(t *testing.T) {
 	}
 }
 `,
-			expected: Rule{
-				ID:          "123",
-				Description: "description",
-				Match: &Match{
-					Methods:    []string{"GET"},
-					URL:        `https://example.com/api/v1<<(?:/agencies/(?<agency_id>[^/]+?)/devices(?:/(?<device_id>[^/]+?))?|/agencies/(?<agency_id>[^/]+?)/participants(?:/(?<participant_id>[^/]+?))?)$>>`,
-					isComposed: true,
+				expected: Rule{
+					ID:          "123",
+					Description: "description",
+					Match: &Match{
+						Methods:    []string{"GET"},
+						URL:        `https://example.com/api/v1<<(?:/agencies/(?<agency_id>[^/]+?)/devices(?:/(?<device_id>[^/]+?))?|/agencies/(?<agency_id>[^/]+?)/participants(?:/(?<participant_id>[^/]+?))?)$>>`,
+						isComposed: true,
+					},
+					requiresComposed:      true,
+					composedRegexpPattern: `https://example.com/api/v1<<(?:/agencies/(?<agency_id>[^/]+?)/devices(?:/(?<device_id>[^/]+?))?|/agencies/(?<agency_id>[^/]+?)/participants(?:/(?<participant_id>[^/]+?))?)$>>`,
+					composedGlobPattern:   `https://example.com/api/v1<{/agencies/*/devices,/agencies/*/devices/*,/agencies/*/participants,/agencies/*/participants/*}>`,
+					composedRawURL:        json.RawMessage(`{"base":"https://example.com/api/v1","paths":[{"prefix":"/agencies/:agency_id","branches":[{"path":"/devices/:device_id?"},{"path":"/participants/:participant_id?"}]}],"path_params":[{"name":"agency_id","type":"regex","value":"[^/]+?"},{"name":"device_id","type":"regex","value":"[^/]+?"},{"name":"participant_id","type":"regex","value":"[^/]+?"}]}`),
 				},
-				requiresRegexp: true,
+				err: assert.NoError,
 			},
-			err: assert.NoError,
-		},
 
 		{name: "err on invalid version",
 			json: `
@@ -298,6 +301,32 @@ func TestRule_UnmarshalJSON(t *testing.T) {
 `,
 			err: assert.Error,
 		},
+		{name: "err on overlapping composed match from optional expansion",
+			json: `
+{
+	"id": "123",
+	"description": "description",
+	"match": {
+		"url": {
+			"base": "https://example.com/api/v1",
+			"paths": [{
+				"prefix": "/agencies/:agency_id",
+				"branches": [
+					{"path": "/devices/:device_id?"},
+					{"path": "/devices"}
+				]
+			}],
+			"path_params": [
+				{"name": "agency_id", "type": "regex", "value": "[^/]+?"},
+				{"name": "device_id", "type": "regex", "value": "[^/]+?"}
+			]
+		},
+		"methods": ["GET"]
+	}
+}
+`,
+			err: assert.Error,
+		},
 	}
 
 	for _, tc := range tests {
@@ -313,7 +342,7 @@ func TestRule_UnmarshalJSON(t *testing.T) {
 	}
 }
 
-func TestRule_ComposedURLRejectsGlobStrategy(t *testing.T) {
+func TestRule_ComposedURLSupportsGlobStrategy(t *testing.T) {
 	raw := `
 {
 	"id": "123",
@@ -338,9 +367,113 @@ func TestRule_ComposedURLRejectsGlobStrategy(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(raw), &r))
 
 	matched, err := r.IsMatching(configuration.Glob, "GET", mustParse(t, "https://example.com/api/v1/agencies/a1/devices/d1"), ProtocolHTTP)
-	require.Error(t, err)
-	assert.False(t, matched)
-	assert.ErrorIs(t, err, ErrComposedURLRequiresRegexp)
+	require.NoError(t, err)
+	assert.True(t, matched)
+
+	_, named, err := r.ExtractRegexGroups(configuration.Glob, mustParse(t, "https://example.com/api/v1/agencies/a1/devices/d1"))
+	require.NoError(t, err)
+	assert.Equal(t, "a1", named["agency_id"])
+	assert.Equal(t, "d1", named["device_id"])
+}
+
+func TestRule_ComposedURLSupportsGlobStrategy_OptionalPathParam(t *testing.T) {
+	raw := `
+{
+	"id": "123",
+	"description": "description",
+	"match": {
+		"url": {
+			"base": "https://example.com/api/v1",
+			"paths": [{
+				"prefix": "/agencies/:agency_id",
+				"branches": [{"path": "/devices/:device_id?"}]
+			}],
+			"path_params": [
+				{"name": "agency_id", "type": "regex", "value": "[^/]+?"},
+				{"name": "device_id", "type": "regex", "value": "[^/]+?"}
+			]
+		},
+		"methods": ["GET"]
+	}
+}
+`
+	var r Rule
+	require.NoError(t, json.Unmarshal([]byte(raw), &r))
+
+	withDevice := mustParse(t, "https://example.com/api/v1/agencies/a1/devices/d1")
+	withoutDevice := mustParse(t, "https://example.com/api/v1/agencies/a1/devices")
+
+	matched, err := r.IsMatching(configuration.Glob, "GET", withDevice, ProtocolHTTP)
+	require.NoError(t, err)
+	assert.True(t, matched)
+
+	matched, err = r.IsMatching(configuration.Glob, "GET", withoutDevice, ProtocolHTTP)
+	require.NoError(t, err)
+	assert.True(t, matched)
+
+	_, named, err := r.ExtractRegexGroups(configuration.Glob, withoutDevice)
+	require.NoError(t, err)
+	assert.Equal(t, "a1", named["agency_id"])
+	assert.Equal(t, "", named["device_id"])
+}
+
+func TestRule_ComposedURLCompileOrderStable(t *testing.T) {
+	rawA := `
+{
+	"id": "123",
+	"description": "description",
+	"match": {
+		"url": {
+			"base": "https://example.com/api/v1",
+			"paths": [{
+				"prefix": "/agencies/:agency_id",
+				"branches": [
+					{"path": "/participants/:participant_id?"},
+					{"path": "/devices/:device_id?"}
+				]
+			}],
+			"path_params": [
+				{"name": "agency_id", "type": "regex", "value": "[^/]+?"},
+				{"name": "device_id", "type": "regex", "value": "[^/]+?"},
+				{"name": "participant_id", "type": "regex", "value": "[^/]+?"}
+			]
+		},
+		"methods": ["GET"]
+	}
+}
+`
+	rawB := `
+{
+	"id": "123",
+	"description": "description",
+	"match": {
+		"url": {
+			"base": "https://example.com/api/v1",
+			"paths": [{
+				"prefix": "/agencies/:agency_id",
+				"branches": [
+					{"path": "/devices/:device_id?"},
+					{"path": "/participants/:participant_id?"}
+				]
+			}],
+			"path_params": [
+				{"name": "agency_id", "type": "regex", "value": "[^/]+?"},
+				{"name": "participant_id", "type": "regex", "value": "[^/]+?"},
+				{"name": "device_id", "type": "regex", "value": "[^/]+?"}
+			]
+		},
+		"methods": ["GET"]
+	}
+}
+`
+
+	var rA, rB Rule
+	require.NoError(t, json.Unmarshal([]byte(rawA), &rA))
+	require.NoError(t, json.Unmarshal([]byte(rawB), &rB))
+
+	require.Equal(t, rA.requiresComposed, rB.requiresComposed)
+	assert.Equal(t, rA.composedRegexpPattern, rB.composedRegexpPattern)
+	assert.Equal(t, rA.composedGlobPattern, rB.composedGlobPattern)
 }
 
 func TestRule_ComposedURLAllowsEmptyPrefix(t *testing.T) {
@@ -416,4 +549,85 @@ func TestRule_ComposedURLSupportsGlobWildcardsInBranchPath(t *testing.T) {
 	matched, err = rRegexp.IsMatching(configuration.Regexp, "GET", mustParse(t, "https://example.com/api/v1/openapi/index.json"), ProtocolHTTP)
 	require.NoError(t, err)
 	assert.False(t, matched)
+}
+
+func TestRule_ComposedURLRoundTripPreservesGlobMatching(t *testing.T) {
+	raw := `
+{
+	"id": "r1",
+	"match": {
+		"url": {
+			"base": "https://example.com",
+			"paths": [{"prefix": "", "branches": [{"path": "/users/:id"}]}],
+			"path_params": [{"name": "id", "type": "regex", "value": "[^/]+"}]
+		},
+		"methods": ["GET"]
+	}
+}
+`
+	var r Rule
+	require.NoError(t, json.Unmarshal([]byte(raw), &r))
+
+	matched, err := r.IsMatching(configuration.Glob, "GET", mustParse(t, "https://example.com/users/alice"), ProtocolHTTP)
+	require.NoError(t, err)
+	require.True(t, matched)
+
+	b, err := json.Marshal(r)
+	require.NoError(t, err)
+
+	var roundTripped Rule
+	require.NoError(t, json.Unmarshal(b, &roundTripped))
+	matched, err = roundTripped.IsMatching(configuration.Glob, "GET", mustParse(t, "https://example.com/users/alice"), ProtocolHTTP)
+	require.NoError(t, err)
+	assert.True(t, matched)
+}
+
+func TestRule_ComposedURLMarshalPreservesObjectURL(t *testing.T) {
+	raw := `
+{
+	"id": "r1",
+	"match": {
+		"url": {
+			"base": "https://example.com",
+			"paths": [{"prefix": "", "branches": [{"path": "/users/:id"}]}],
+			"path_params": [{"name": "id", "type": "regex", "value": "[^/]+"}]
+		},
+		"methods": ["GET"]
+	}
+}
+`
+	var r Rule
+	require.NoError(t, json.Unmarshal([]byte(raw), &r))
+
+	b, err := json.Marshal(r)
+	require.NoError(t, err)
+
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(b, &doc))
+	match, ok := doc["match"].(map[string]any)
+	require.True(t, ok)
+	_, ok = match["url"].(map[string]any)
+	assert.True(t, ok, "match.url should remain an object when marshaled")
+}
+
+func TestRule_ComposedURLLegacyCompiledPatternStillMatchesWithGlob(t *testing.T) {
+	raw := `
+{
+	"id": "r1",
+	"match": {
+		"url": "https://example.com<<(?:/users/(?<id>[^/]+))$>>",
+		"methods": ["GET"]
+	}
+}
+`
+	var r Rule
+	require.NoError(t, json.Unmarshal([]byte(raw), &r))
+
+	matched, err := r.IsMatching(configuration.Glob, "GET", mustParse(t, "https://example.com/users/alice"), ProtocolHTTP)
+	require.NoError(t, err)
+	assert.True(t, matched)
+
+	_, named, err := r.ExtractRegexGroups(configuration.Glob, mustParse(t, "https://example.com/users/alice"))
+	require.NoError(t, err)
+	assert.Equal(t, "alice", named["id"])
 }

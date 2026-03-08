@@ -4,6 +4,7 @@
 package rule
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/gobwas/glob"
 	"github.com/pkg/errors"
 	"github.com/tidwall/gjson"
 
@@ -129,8 +131,11 @@ type Rule struct {
 	// Upstream is the location of the server where requests matching this rule should be forwarded to.
 	Upstream Upstream `json:"upstream"`
 
-	matchingEngine MatchingEngine
-	requiresRegexp bool
+	matchingEngine        MatchingEngine
+	requiresComposed      bool
+	composedRegexpPattern string
+	composedGlobPattern   string
+	composedRawURL        json.RawMessage
 }
 
 type composedURL struct {
@@ -213,11 +218,71 @@ func (r *Rule) UnmarshalJSON(raw []byte) error {
 	r.Mutators = rr.Mutators
 	r.Errors = rr.Errors
 	r.Upstream = rr.Upstream
-	if m, ok := rr.Match.(*Match); ok && m.isComposed {
-		r.requiresRegexp = true
-	}
+		if m, ok := rr.Match.(*Match); ok && m.isComposed {
+			r.requiresComposed = true
+			var rawMatch struct {
+				URL json.RawMessage `json:"url"`
+			}
+		if err := json.Unmarshal(rr.RawMatch, &rawMatch); err != nil {
+			return errors.WithStack(err)
+		}
+		var cu composedURL
+			if err := json.Unmarshal(rawMatch.URL, &cu); err != nil {
+				return errors.WithStack(err)
+			}
+			compiled, err := compileComposedURL(cu)
+			if err != nil {
+				return err
+			}
+			r.composedRegexpPattern = compiled.RegexpPattern
+			r.composedGlobPattern = compiled.GlobPattern
+			var compact bytes.Buffer
+			if err := json.Compact(&compact, rawMatch.URL); err != nil {
+				return errors.WithStack(err)
+			}
+			r.composedRawURL = append(json.RawMessage(nil), compact.Bytes()...)
+		}
 
 	return nil
+}
+
+func (r Rule) MarshalJSON() ([]byte, error) {
+	type ruleAlias struct {
+		ID             string         `json:"id"`
+		Version        string         `json:"version"`
+		Description    string         `json:"description"`
+		Match          any            `json:"match"`
+		Authenticators []Handler      `json:"authenticators"`
+		Authorizer     Handler        `json:"authorizer"`
+		Mutators       []Handler      `json:"mutators"`
+		Errors         []ErrorHandler `json:"errors"`
+		Upstream       Upstream       `json:"upstream"`
+	}
+
+	out := ruleAlias{
+		ID:             r.ID,
+		Version:        r.Version,
+		Description:    r.Description,
+		Authenticators: r.Authenticators,
+		Authorizer:     r.Authorizer,
+		Mutators:       r.Mutators,
+		Errors:         r.Errors,
+		Upstream:       r.Upstream,
+	}
+
+	if m, ok := r.Match.(*Match); ok && m.isComposed && len(r.composedRawURL) > 0 {
+		out.Match = struct {
+			Methods []string        `json:"methods"`
+			URL     json.RawMessage `json:"url"`
+		}{
+			Methods: m.Methods,
+			URL:     r.composedRawURL,
+		}
+	} else {
+		out.Match = r.Match
+	}
+
+	return json.Marshal(out)
 }
 
 // unmarshalMatch does polymorphic decoding of the match based on keys.
@@ -260,7 +325,7 @@ func unmarshalMatch(raw json.RawMessage, v *URLProvider) error {
 		return err
 	}
 
-	*v = &Match{Methods: probe.Methods, URL: compiled, isComposed: true}
+	*v = &Match{Methods: probe.Methods, URL: compiled.RegexpPattern, isComposed: true}
 	return nil
 }
 
@@ -287,12 +352,18 @@ func (r *Rule) IsMatching(strategy configuration.MatchingStrategy, method string
 
 	matchAgainst := fmt.Sprintf("%s://%s%s", u.Scheme, u.Host, u.Path)
 	pattern := r.Match.GetURL()
-	if r.requiresComposed && strategy == configuration.Glob {
+	if strategy == configuration.Glob && r.requiresComposed {
 		// Composed URLs are compiled to a canonical regexp as the source of truth.
 		// For glob strategy we still evaluate against that regexp to preserve segment
 		// semantics (for example dots in a single path segment) and named captures.
 		re := new(regexpMatchingEngine)
 		return re.IsMatching(r.composedRegexpPattern, matchAgainst)
+	}
+	if strategy == configuration.Glob && isComposedCompiledPattern(pattern) {
+		// Backward compatibility for previously persisted composed rules that were
+		// serialized as compiled regexp strings.
+		re := new(regexpMatchingEngine)
+		return re.IsMatching(pattern, matchAgainst)
 	}
 	return r.matchingEngine.IsMatching(pattern, matchAgainst)
 }
@@ -319,9 +390,6 @@ func stringInSlice(a string, list []string) bool {
 func ensureMatchingEngine(rule *Rule, strategy configuration.MatchingStrategy) error {
 	if rule.matchingEngine != nil {
 		return nil
-	}
-	if rule.requiresRegexp && strategy == configuration.Glob {
-		return errors.WithStack(ErrComposedURLRequiresRegexp)
 	}
 	switch strategy {
 	case configuration.Glob:
@@ -351,6 +419,33 @@ func (r *Rule) ExtractRegexGroups(strategy configuration.MatchingStrategy, u *ur
 	}
 
 	matchAgainst := fmt.Sprintf("%s://%s%s", u.Scheme, u.Host, u.Path)
+	if strategy == configuration.Glob && r.requiresComposed {
+		re := new(regexpMatchingEngine)
+		if groups, err = re.FindStringSubmatch(r.composedRegexpPattern, matchAgainst); err != nil {
+			return nil, nil, err
+		}
+		if namedGroups, err = re.FindNamedStringSubmatch(r.composedRegexpPattern, matchAgainst); err != nil {
+			if groups != nil {
+				return groups, nil, err
+			}
+			return nil, nil, err
+		}
+		return groups, namedGroups, nil
+	}
+	if strategy == configuration.Glob && isComposedCompiledPattern(r.Match.GetURL()) {
+		re := new(regexpMatchingEngine)
+		if groups, err = re.FindStringSubmatch(r.Match.GetURL(), matchAgainst); err != nil {
+			return nil, nil, err
+		}
+		if namedGroups, err = re.FindNamedStringSubmatch(r.Match.GetURL(), matchAgainst); err != nil {
+			if groups != nil {
+				return groups, nil, err
+			}
+			return nil, nil, err
+		}
+		return groups, namedGroups, nil
+	}
+
 	if groups, err = r.matchingEngine.FindStringSubmatch(r.Match.GetURL(), matchAgainst); err != nil {
 		return nil, nil, err
 	}
@@ -365,79 +460,102 @@ func (r *Rule) ExtractRegexGroups(strategy configuration.MatchingStrategy, u *ur
 	return groups, namedGroups, nil
 }
 
-func compileComposedURL(c composedURL) (string, error) {
+func isComposedCompiledPattern(pattern string) bool {
+	return strings.Contains(pattern, "<<") && strings.Contains(pattern, ">>")
+}
+
+type composedURLCompiled struct {
+	RegexpPattern string
+	GlobPattern   string
+}
+
+func compileComposedURL(c composedURL) (*composedURLCompiled, error) {
 	if strings.TrimSpace(c.Base) == "" {
-		return "", errors.New(`"match.url.base" must not be empty`)
+		return nil, errors.New(`"match.url.base" must not be empty`)
 	}
 	if len(c.Paths) == 0 {
-		return "", errors.New(`"match.url.paths" must not be empty`)
+		return nil, errors.New(`"match.url.paths" must not be empty`)
 	}
 
 	paramDefs := make(map[string]composedURLParam, len(c.PathParams))
 	paramUsage := make(map[string]bool, len(c.PathParams))
 	for _, p := range c.PathParams {
 		if p.Name == "" {
-			return "", errors.New(`"match.url.path_params[].name" must not be empty`)
+			return nil, errors.New(`"match.url.path_params[].name" must not be empty`)
 		}
 		if _, exists := paramDefs[p.Name]; exists {
-			return "", errors.Errorf(`duplicate "match.url.path_params" name: %s`, p.Name)
+			return nil, errors.Errorf(`duplicate "match.url.path_params" name: %s`, p.Name)
 		}
 		if p.Type != "regex" {
-			return "", errors.Errorf(`unsupported "match.url.path_params[%s].type": %s`, p.Name, p.Type)
+			return nil, errors.Errorf(`unsupported "match.url.path_params[%s].type": %s`, p.Name, p.Type)
 		}
 		if p.Value == "" {
-			return "", errors.Errorf(`"match.url.path_params[%s].value" must not be empty`, p.Name)
+			return nil, errors.Errorf(`"match.url.path_params[%s].value" must not be empty`, p.Name)
 		}
 		if _, err := regexp.Compile(p.Value); err != nil {
-			return "", errors.Errorf(`invalid regex for "match.url.path_params[%s]": %s`, p.Name, err)
+			return nil, errors.Errorf(`invalid regex for "match.url.path_params[%s]": %s`, p.Name, err)
 		}
 		paramDefs[p.Name] = p
 	}
 
-	alts := make([]string, 0)
-	altSet := make(map[string]struct{})
+	regexAlts := make([]string, 0)
+	regexAltSet := make(map[string]struct{})
+	globAlts := make([]string, 0)
+	globAltSet := make(map[string]struct{})
 	parsedBranchTemplates := make([][]pathSegment, 0)
 	for i, p := range c.Paths {
 		if p.Prefix != "" && !strings.HasPrefix(p.Prefix, "/") {
-			return "", errors.Errorf(`"match.url.paths[%d].prefix" must be empty or start with "/"`, i)
+			return nil, errors.Errorf(`"match.url.paths[%d].prefix" must be empty or start with "/"`, i)
 		}
 		if len(p.Branches) == 0 {
-			return "", errors.Errorf(`"match.url.paths[%d].branches" must not be empty`, i)
+			return nil, errors.Errorf(`"match.url.paths[%d].branches" must not be empty`, i)
 		}
 		for j, b := range p.Branches {
 			if !strings.HasPrefix(b.Path, "/") {
-				return "", errors.Errorf(`"match.url.paths[%d].branches[%d].path" must start with "/"`, i, j)
+				return nil, errors.Errorf(`"match.url.paths[%d].branches[%d].path" must start with "/"`, i, j)
 			}
 			fullPath := joinPathPrefixAndBranch(p.Prefix, b.Path)
 			segments, used, err := parsePathTemplate(fullPath, paramDefs)
 			if err != nil {
-				return "", errors.Wrapf(err, "invalid composed path at paths[%d].branches[%d]", i, j)
+				return nil, errors.Wrapf(err, "invalid composed path at paths[%d].branches[%d]", i, j)
 			}
-			compiledPath := compileSegmentsToRegex(segments)
 			for name := range used {
 				paramUsage[name] = true
 			}
-			if _, dup := altSet[compiledPath]; dup {
-				return "", errors.Errorf(`duplicate composed URL branch expansion detected: %s`, fullPath)
+			compiledRegexPath := compileSegmentsToRegex(segments)
+			if _, dup := regexAltSet[compiledRegexPath]; dup {
+				return nil, errors.Errorf(`duplicate composed URL branch expansion detected: %s`, fullPath)
 			}
-			altSet[compiledPath] = struct{}{}
-			alts = append(alts, compiledPath)
+			regexAltSet[compiledRegexPath] = struct{}{}
+			regexAlts = append(regexAlts, compiledRegexPath)
+
+			for _, variant := range expandOptionalSegments(segments) {
+				globPath := compileSegmentsToGlob(variant)
+				if _, dup := globAltSet[globPath]; !dup {
+					globAltSet[globPath] = struct{}{}
+					globAlts = append(globAlts, globPath)
+				}
+			}
 			parsedBranchTemplates = append(parsedBranchTemplates, segments)
 		}
 	}
 
 	if err := detectComposedBranchOverlaps(parsedBranchTemplates); err != nil {
-		return "", err
+		return nil, err
 	}
 
 	for name := range paramDefs {
 		if !paramUsage[name] {
-			return "", errors.Errorf(`"match.url.path_params[%s]" is declared but never used`, name)
+			return nil, errors.Errorf(`"match.url.path_params[%s]" is declared but never used`, name)
 		}
 	}
 
-	sort.Strings(alts)
-	return fmt.Sprintf(`%s<<(?:%s)$>>`, c.Base, strings.Join(alts, "|")), nil
+	sort.Strings(regexAlts)
+	sort.Strings(globAlts)
+	return &composedURLCompiled{
+		RegexpPattern: fmt.Sprintf(`%s<<(?:%s)$>>`, c.Base, strings.Join(regexAlts, "|")),
+		GlobPattern:   fmt.Sprintf(`%s<{%s}>`, c.Base, strings.Join(globAlts, ",")),
+	}, nil
 }
 
 func joinPathPrefixAndBranch(prefix, branch string) string {
@@ -517,6 +635,7 @@ func compileSegmentsToGlob(segments []pathSegment) string {
 	}
 	return b.String()
 }
+
 func detectComposedBranchOverlaps(templates [][]pathSegment) error {
 	expanded := make([][][]pathSegment, len(templates))
 	for i, tpl := range templates {
