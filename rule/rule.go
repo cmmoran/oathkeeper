@@ -307,7 +307,11 @@ func (r *Rule) IsMatching(strategy configuration.MatchingStrategy, method string
 	matchAgainst := fmt.Sprintf("%s://%s%s", u.Scheme, u.Host, u.Path)
 	pattern := r.Match.GetURL()
 	if r.requiresComposed && strategy == configuration.Glob {
-		pattern = r.composedGlobPattern
+		// Composed URLs are compiled to a canonical regexp as the source of truth.
+		// For glob strategy we still evaluate against that regexp to preserve segment
+		// semantics (for example dots in a single path segment) and named captures.
+		re := new(regexpMatchingEngine)
+		return re.IsMatching(r.composedRegexpPattern, matchAgainst)
 	}
 	return r.matchingEngine.IsMatching(pattern, matchAgainst)
 }
@@ -493,10 +497,6 @@ func joinPathPrefixAndBranch(prefix, branch string) string {
 }
 
 func parsePathTemplate(path string, paramDefs map[string]composedURLParam) ([]pathSegment, map[string]struct{}, error) {
-	if strings.Contains(path, "?") && !strings.Contains(path, ":") {
-		return nil, nil, errors.New(`"?" is only allowed in parameter segments (e.g. ":id?")`)
-	}
-
 	segments := strings.Split(path, "/")
 	if len(segments) == 0 || segments[0] != "" {
 		return nil, nil, errors.New(`path must be absolute`)
@@ -530,9 +530,6 @@ func parsePathTemplate(path string, paramDefs map[string]composedURLParam) ([]pa
 			continue
 		}
 
-		if strings.Contains(segment, "?") {
-			return nil, nil, errors.Errorf(`"?" is only allowed for parameter segments, got: %s`, segment)
-		}
 		result = append(result, pathSegment{literal: segment})
 	}
 
@@ -544,7 +541,7 @@ func compileSegmentsToRegex(segments []pathSegment) string {
 	for _, seg := range segments {
 		if seg.param == nil {
 			b.WriteString("/")
-			b.WriteString(regexp.QuoteMeta(seg.literal))
+			b.WriteString(compileLiteralSegmentToRegex(seg.literal))
 			continue
 		}
 
@@ -565,7 +562,7 @@ func compileSegmentsToGlob(segments []pathSegment) string {
 			continue
 		}
 		b.WriteString("/")
-		b.WriteString(glob.QuoteMeta(seg.literal))
+		b.WriteString(compileLiteralSegmentToGlob(seg.literal))
 	}
 	return b.String()
 }
@@ -629,14 +626,34 @@ func variantsOverlap(left, right [][]pathSegment) bool {
 
 func segmentsCompatible(a, b pathSegment) bool {
 	if a.param == nil && b.param == nil {
-		return a.literal == b.literal
+		aGlob := hasGlobWildcards(a.literal)
+		bGlob := hasGlobWildcards(b.literal)
+		if !aGlob && !bGlob {
+			return a.literal == b.literal
+		}
+		if aGlob && bGlob {
+			// Conservative: two glob patterns in same segment may overlap.
+			return true
+		}
+		if aGlob {
+			return globLiteralMatchesStatic(a.literal, b.literal)
+		}
+		return globLiteralMatchesStatic(b.literal, a.literal)
 	}
 	if a.param != nil && b.param != nil {
 		// Conservative: two regex params at same segment are considered overlapping.
 		return true
 	}
 	if a.param != nil {
+		if hasGlobWildcards(b.literal) {
+			// Conservative: glob-literal may generate values matching regex param.
+			return true
+		}
 		return staticMatchesRegex(b.literal, a.param.Value)
+	}
+	if hasGlobWildcards(a.literal) {
+		// Conservative: glob-literal may generate values matching regex param.
+		return true
 	}
 	return staticMatchesRegex(a.literal, b.param.Value)
 }
@@ -647,4 +664,48 @@ func staticMatchesRegex(s, pattern string) bool {
 		return false
 	}
 	return re.MatchString(s)
+}
+
+func hasGlobWildcards(s string) bool {
+	return strings.ContainsAny(s, "*?")
+}
+
+func compileLiteralSegmentToRegex(segment string) string {
+	if !hasGlobWildcards(segment) {
+		return regexp.QuoteMeta(segment)
+	}
+
+	var b strings.Builder
+	for _, r := range segment {
+		switch r {
+		case '*':
+			b.WriteString(`[^/]*`)
+		case '?':
+			b.WriteString(`[^/]`)
+		default:
+			b.WriteString(regexp.QuoteMeta(string(r)))
+		}
+	}
+	return b.String()
+}
+
+func compileLiteralSegmentToGlob(segment string) string {
+	var b strings.Builder
+	for _, r := range segment {
+		switch r {
+		case '*', '?':
+			b.WriteRune(r)
+		default:
+			b.WriteString(glob.QuoteMeta(string(r)))
+		}
+	}
+	return b.String()
+}
+
+func globLiteralMatchesStatic(globPattern, candidate string) bool {
+	re, err := regexp.Compile("^" + compileLiteralSegmentToRegex(globPattern) + "$")
+	if err != nil {
+		return false
+	}
+	return re.MatchString(candidate)
 }

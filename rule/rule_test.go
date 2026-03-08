@@ -513,3 +513,39 @@ func TestRule_ComposedURLAllowsEmptyPrefix(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "d1", named["device_id"])
 }
+
+func TestRule_ComposedURLSupportsGlobWildcardsInBranchPath(t *testing.T) {
+	raw := `
+{
+	"id": "123",
+	"description": "description",
+	"match": {
+		"url": {
+			"base": "https://example.com/api/v1",
+			"paths": [{
+				"prefix": "",
+				"branches": [{"path": "/openapi/*.html"}]
+			}]
+		},
+		"methods": ["GET"]
+	}
+}
+`
+
+	var r Rule
+	require.NoError(t, json.Unmarshal([]byte(raw), &r))
+
+	matched, err := r.IsMatching(configuration.Glob, "GET", mustParse(t, "https://example.com/api/v1/openapi/index.html"), ProtocolHTTP)
+	require.NoError(t, err)
+	assert.True(t, matched)
+
+	var rRegexp Rule
+	require.NoError(t, json.Unmarshal([]byte(raw), &rRegexp))
+	matched, err = rRegexp.IsMatching(configuration.Regexp, "GET", mustParse(t, "https://example.com/api/v1/openapi/index.html"), ProtocolHTTP)
+	require.NoError(t, err)
+	assert.True(t, matched)
+
+	matched, err = rRegexp.IsMatching(configuration.Regexp, "GET", mustParse(t, "https://example.com/api/v1/openapi/index.json"), ProtocolHTTP)
+	require.NoError(t, err)
+	assert.False(t, matched)
+}
