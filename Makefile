@@ -2,7 +2,10 @@ SHELL=/bin/bash -o pipefail
 
 export PATH					:= .bin:${PATH}
 export PWD					:= $(shell pwd)
-export IMAGE_TAG		:= $(if $(IMAGE_TAG),$(IMAGE_TAG),dev)
+export IMAGE_TAG			:= $(if $(IMAGE_TAG),$(IMAGE_TAG),dev)
+export DOCKER_REPO 			?= "oryd"
+export DOCKER_PROJECT 		?= "oathkeeper"
+export DOCKER_FULL 			?= "$(DOCKER_REPO)/$(DOCKER_PROJECT)"
 
 GO_DEPENDENCIES = github.com/ory/go-acc \
 				  github.com/go-swagger/go-swagger/cmd/swagger \
@@ -89,7 +92,7 @@ install:
 
 .PHONY: docker
 docker:
-	DOCKER_BUILDKIT=1 DOCKER_CONTENT_TRUST=1 docker build -t oryd/oathkeeper:${IMAGE_TAG} --progress=plain -f .docker/Dockerfile-build . 
+	DOCKER_BUILDKIT=1 DOCKER_CONTENT_TRUST=1 docker build -t ${DOCKER_FULL}:${IMAGE_TAG} --progress=plain --push -f .docker/Dockerfile-build .
 
 .PHONY: docker-k3d
 docker-k3d:

@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ory/x/httprouterx"
+
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/cors"
@@ -66,6 +68,7 @@ func runProxy(d driver.Driver, n *negroni.Negroni, logger *logrusx.Logger, prom 
 			},
 		}
 
+		n.UseFunc(httprouterx.IncludeCorrelationId)
 		promHidePaths := d.Configuration().PrometheusHideRequestPaths()
 		promCollapsePaths := d.Configuration().PrometheusCollapseRequestPaths()
 		n.Use(metrics.NewMiddleware(prom, "oathkeeper-proxy").ExcludePaths(healthx.ReadyCheckPath, healthx.AliveCheckPath).HidePaths(promHidePaths).CollapsePaths(promCollapsePaths))
@@ -115,6 +118,7 @@ func runAPI(d driver.Driver, n *negroni.Negroni, logger *logrusx.Logger, prom *m
 		promHidePaths := d.Configuration().PrometheusHideRequestPaths()
 		promCollapsePaths := d.Configuration().PrometheusCollapseRequestPaths()
 
+		n.UseFunc(httprouterx.IncludeCorrelationId)
 		n.Use(metrics.NewMiddleware(prom, "oathkeeper-api").ExcludePaths(healthx.ReadyCheckPath, healthx.AliveCheckPath).HidePaths(promHidePaths).CollapsePaths(promCollapsePaths))
 		n.Use(reqlog.NewMiddlewareFromLogger(logger, "oathkeeper-api").ExcludePaths(healthx.ReadyCheckPath, healthx.AliveCheckPath))
 		n.Use(corsx.ContextualizedMiddleware(func(ctx context.Context) (opts cors.Options, enabled bool) { //nolint:staticcheck // legacy middleware still supported

@@ -28,8 +28,51 @@
         "jaeger": {
           "type": "object",
           "additionalProperties": false,
+          "oneOf": [
+            {
+              "not": {
+                "anyOf": [
+                  { "required": ["local_agent_address"] },
+                  { "required": ["collector_scheme", "collector_address"] }
+                ]
+              }
+            },
+            {
+              "required": ["local_agent_address"],
+              "not": { "required": ["collector_scheme", "collector_address"] }
+            },
+            {
+              "required": ["collector_scheme", "collector_address"],
+              "not": { "required": ["local_agent_address"] }
+            }
+          ],
           "description": "Configures the jaeger tracing backend.",
           "properties": {
+            "collector_scheme": {
+              "enum": ["http", "https", "grpc"],
+              "type": "string",
+              "default": "http",
+              "description": "The scheme to use for sending jaeger-collector spans; http(s) is port 14268, grpc is 14250 by default"
+            },
+            "collector_address": {
+              "type": "string",
+              "description": "The address of the jaeger-collector where spans should be sent to.",
+              "anyOf": [
+                {
+                  "title": "IPv6 Address and Port",
+                  "pattern": "^\\[(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))]:([0-9]*)$"
+                },
+                {
+                  "title": "IPv4 Address and Port",
+                  "pattern": "^([0-9]{1,3}\\.){3}[0-9]{1,3}:([0-9]*)$"
+                },
+                {
+                  "title": "Hostname and Port",
+                  "pattern": "^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-_]*[a-zA-Z0-9])\\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\\-_]*[A-Za-z0-9]):([0-9]*)$"
+                }
+              ],
+              "examples": ["127.0.0.1:14268", "jaeger:14268", "jaeger-grpc-host:14250"]
+            },
             "local_agent_address": {
               "type": "string",
               "description": "The address of the jaeger-agent where spans should be sent to.",
@@ -44,7 +87,7 @@
                 },
                 {
                   "title": "Hostname and Port",
-                  "pattern": "^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]*[a-zA-Z0-9])\\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\\-]*[A-Za-z0-9]):([0-9]*)$"
+                  "pattern": "^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-_]*[a-zA-Z0-9])\\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\\-_]*[A-Za-z0-9]):([0-9]*)$"
                 }
               ],
               "examples": ["127.0.0.1:6831"]

@@ -44,13 +44,17 @@ func NewJudgeHandler(r decisionHandlerRegistry) *DecisionHandler {
 
 func (h *DecisionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
 	if len(r.URL.Path) >= len(DecisionPath) && r.URL.Path[:len(DecisionPath)] == DecisionPath {
-		r.Method = cmp.Or(r.Header.Get(xForwardedMethod), r.Method)
-		r.URL.Scheme = cmp.Or(r.Header.Get(xForwardedProto),
+		// Clone the request, instead of modifing the incoming request directly.
+		// This is necessary because the middleware would otherwise use the method from "X-Forwarded-Method" for the response
+		// although the original request had another method, which leads to problems with the HEAD method.
+		// For more information see: https://github.com/thomseddon/traefik-forward-auth/issues/156
+		forwardedReq := r.Clone(r.Context())
+		forwardedReq.Method = cmp.Or(r.Header.Get(xForwardedMethod), r.Method)
+		forwardedReq.URL.Scheme = cmp.Or(r.Header.Get(xForwardedProto),
 			x.IfThenElseString(r.TLS != nil, "https", "http"))
-		r.URL.Host = cmp.Or(r.Header.Get(xForwardedHost), r.Host)
-		r.URL.Path = cmp.Or(strings.SplitN(r.Header.Get(xForwardedUri), "?", 2)[0], r.URL.Path[len(DecisionPath):])
-
-		h.decisions(w, r)
+		forwardedReq.URL.Host = cmp.Or(r.Header.Get(xForwardedHost), r.Host)
+		forwardedReq.URL.Path = cmp.Or(strings.SplitN(r.Header.Get(xForwardedUri), "?", 2)[0], r.URL.Path[len(DecisionPath):])
+		h.decisions(w, forwardedReq)
 	} else {
 		next(w, r)
 	}
@@ -87,6 +91,9 @@ func (h *DecisionHandler) decisions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rl, err := h.r.RuleMatcher().Match(r.Context(), r.Method, r.URL, rule.ProtocolHTTP)
+	if rl != nil {
+		fields["rule_id"] = rl.ID
+	}
 	if err != nil {
 		h.r.Logger().WithError(err).
 			WithFields(fields).

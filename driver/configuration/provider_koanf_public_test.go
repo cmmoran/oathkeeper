@@ -247,7 +247,7 @@ func TestKoanfProvider(t *testing.T) {
 		})
 
 		t.Run("authenticator=cookie_session", func(t *testing.T) {
-			a := authn.NewAuthenticatorCookieSession(p, noop.NewTracerProvider())
+			a := authn.NewAuthenticatorCookieSession(p, noop.NewTracerProvider(), nil)
 			assert.True(t, p.AuthenticatorIsEnabled(a.GetID()))
 			require.NoError(t, a.Validate(nil))
 
@@ -334,7 +334,7 @@ func TestKoanfProvider(t *testing.T) {
 		})
 
 		t.Run("authorizer=remote_json", func(t *testing.T) {
-			a := authz.NewAuthorizerRemoteJSON(p, otelx.NewNoop())
+			a := authz.NewAuthorizerRemoteJSONNoop(p, otelx.NewNoop())
 			assert.True(t, p.AuthorizerIsEnabled(a.GetID()))
 			require.NoError(t, a.Validate(nil))
 
