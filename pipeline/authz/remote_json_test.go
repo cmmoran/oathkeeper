@@ -216,7 +216,7 @@ func TestAuthorizerRemoteJSONAuthorize(t *testing.T) {
 			if err != nil {
 				l.WithError(err).Fatal("Failed to initialize configuration")
 			}
-			a := NewAuthorizerRemoteJSON(p, otelx.NewNoop())
+			a := NewAuthorizerRemoteJSONNoop(p, otelx.NewNoop())
 			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 			defer cancel()
 			r, err := http.NewRequestWithContext(ctx, "", "", nil)
@@ -305,7 +305,7 @@ func TestAuthorizerRemoteJSONValidate(t *testing.T) {
 				configx.SkipValidation(),
 			)
 			require.NoError(t, err)
-			a := NewAuthorizerRemoteJSON(p, otelx.NewNoop())
+			a := NewAuthorizerRemoteJSONNoop(p, otelx.NewNoop())
 			p.SetForTest(t, configuration.AuthorizerRemoteJSONIsEnabled, tt.enabled)
 			if err := a.Validate(tt.config); (err != nil) != tt.wantErr {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
@@ -357,7 +357,7 @@ func TestAuthorizerRemoteJSONConfig(t *testing.T) {
 				context.Background(), nil, logrusx.New("", ""),
 			)
 			require.NoError(t, err)
-			a := NewAuthorizerRemoteJSON(p, otelx.NewNoop())
+			a := NewAuthorizerRemoteJSONNoop(p, otelx.NewNoop())
 			actual, err := a.Config(tt.raw)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.expected, actual)

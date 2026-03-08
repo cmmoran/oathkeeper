@@ -7,6 +7,8 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/rsa"
+	"encoding/base64"
+	stderrors "errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -14,8 +16,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/pkg/errors"
 
-	"github.com/ory/fosite"
 	"github.com/ory/herodot"
+	"github.com/ory/oathkeeper/fosite"
 	"github.com/ory/oathkeeper/helper"
 	"github.com/ory/x/jwtx"
 	"github.com/ory/x/stringsx"
@@ -88,7 +90,7 @@ func (v *VerifierDefault) Verify(
 			errors.Is(err, jwt.ErrTokenSignatureInvalid) ||
 			errors.Is(err, jwt.ErrTokenInvalidClaims) ||
 			errors.Is(err, jwt.ErrTokenMalformed) {
-			return nil, herodot.ErrInternalServerError.WithError(err.Error()).WithTrace(err)
+			return nil, herodot.ErrInternalServerError.WithErrorf(err.Error()).WithTrace(err)
 		}
 		return nil, err
 	} else if !t.Valid {
@@ -165,4 +167,37 @@ func scope(claims map[string]interface{}) ([]string, string) {
 	default:
 		return []string{}, key
 	}
+}
+
+func (v *VerifierDefault) VerifyPayload(ctx context.Context, r *ValidationContext, sig string, payload []byte) error {
+	var errs error
+	for _, kid := range r.KeyIDs {
+		if kid == "" {
+			errs = stderrors.Join(errs, errors.WithStack(herodot.ErrBadRequest.WithReason("The signed HTTP message must contain a kid header value but did not.")))
+			continue
+		}
+
+		key, err := v.r.CredentialsFetcher().ResolveKey(ctx, r.KeyURLs, kid, "sig")
+		if err != nil {
+			errs = stderrors.Join(errs, err)
+			continue
+		}
+
+		// Mutate to public key
+		if _, ok := key.Key.([]byte); !ok && !key.IsPublic() {
+			k := key.Public()
+			key = &k
+		}
+
+		decSig, _ := base64.RawURLEncoding.DecodeString(sig)
+		method := jwt.GetSigningMethod(key.Algorithm)
+		if err = method.Verify(string(payload), decSig, key.Key); err == nil {
+			// on success ignore all errors
+			return nil
+		} else {
+			errs = stderrors.Join(errs, fmt.Errorf("signature verification failed %s %w, %s %s %s %s %s %s", "error", err, "signature", sig, "body", string(payload), "kid", key.KeyID))
+		}
+	}
+
+	return errs
 }

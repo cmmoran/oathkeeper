@@ -21,8 +21,10 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/oauth2/clientcredentials"
 
-	"github.com/ory/fosite"
+	"github.com/ory/oathkeeper/x"
+
 	"github.com/ory/oathkeeper/driver/configuration"
+	"github.com/ory/oathkeeper/fosite"
 	"github.com/ory/oathkeeper/helper"
 	"github.com/ory/oathkeeper/pipeline"
 	"github.com/ory/oathkeeper/x/header"
@@ -37,6 +39,7 @@ type AuthenticatorOAuth2IntrospectionConfiguration struct {
 	Issuers                     []string                                              `json:"trusted_issuers"`
 	PreAuth                     *AuthenticatorOAuth2IntrospectionPreAuthConfiguration `json:"pre_authorization"`
 	ScopeStrategy               string                                                `json:"scope_strategy"`
+	ScopeMatch                  string                                                `json:"scope_match"`
 	IntrospectionURL            string                                                `json:"introspection_url"`
 	PreserveHost                bool                                                  `json:"preserve_host"`
 	BearerTokenLocation         *helper.BearerTokenLocation                           `json:"token_from"`
@@ -174,7 +177,7 @@ func (a *AuthenticatorOAuth2Introspection) Authenticate(r *http.Request, session
 	tp := trace.SpanFromContext(r.Context()).TracerProvider()
 	ctx, span := tp.Tracer("oauthkeeper/pipeline/authn").Start(r.Context(), "pipeline.authn.AuthenticatorOAuth2Introspection.Authenticate")
 	defer otelx.End(span, &err)
-	r = r.WithContext(ctx)
+	*r = *(r.WithContext(ctx))
 
 	cf, client, err := a.Config(config)
 	if err != nil {
@@ -204,6 +207,12 @@ func (a *AuthenticatorOAuth2Introspection) Authenticate(r *http.Request, session
 			return errors.WithStack(err)
 		}
 
+		if cid := r.Header.Get("X-Correlation-ID"); cid != "" {
+			introspectReq.Header.Set("X-Correlation-ID", cid)
+		}
+		if fingerprint := r.Header.Get("X-Session-Entropy"); len(fingerprint) > 0 {
+			introspectReq.Header.Add("X-Session-Entropy", fingerprint)
+		}
 		for key, value := range cf.IntrospectionRequestHeaders {
 			introspectReq.Header.Set(key, value)
 		}
@@ -218,6 +227,7 @@ func (a *AuthenticatorOAuth2Introspection) Authenticate(r *http.Request, session
 		if err != nil {
 			return errors.WithStack(err)
 		}
+
 		defer resp.Body.Close() //nolint:errcheck
 
 		if resp.StatusCode == http.StatusTooManyRequests {
@@ -256,9 +266,23 @@ func (a *AuthenticatorOAuth2Introspection) Authenticate(r *http.Request, session
 	}
 
 	if ss != nil {
-		for _, scope := range cf.Scopes {
-			if !ss(strings.Split(i.Scope, " "), scope) {
-				return errors.WithStack(helper.ErrForbidden.WithReason(fmt.Sprintf("Scope %s was not granted", scope)))
+		tokenScopes := strings.Fields(i.Scope)
+		if cf.ScopeMatch == "any" {
+			matched := false
+			for _, requiredScope := range cf.Scopes {
+				if ss(tokenScopes, requiredScope) {
+					matched = true
+					break
+				}
+			}
+			if !matched && len(cf.Scopes) > 0 {
+				return errors.WithStack(helper.ErrForbidden.WithReason(fmt.Sprintf("None of [%s] were granted", cf.Scopes)))
+			}
+		} else {
+			for _, requiredScope := range cf.Scopes {
+				if !ss(tokenScopes, requiredScope) {
+					return errors.WithStack(helper.ErrForbidden.WithReason(fmt.Sprintf("Scope %s was not granted", requiredScope)))
+				}
 			}
 		}
 	}
@@ -273,7 +297,7 @@ func (a *AuthenticatorOAuth2Introspection) Authenticate(r *http.Request, session
 
 	i.Extra["username"] = i.Username
 	i.Extra["client_id"] = i.ClientID
-	i.Extra["scope"] = i.Scope
+	i.Extra["scope"] = strings.Fields(i.Scope)
 
 	if len(i.Audience) != 0 {
 		i.Extra["aud"] = i.Audience
@@ -281,6 +305,16 @@ func (a *AuthenticatorOAuth2Introspection) Authenticate(r *http.Request, session
 
 	session.Subject = i.Subject
 	session.Extra = i.Extra
+	var corrId string
+	if len(r.Header.Get("x-correlation-id")) > 0 {
+		corrId = r.Header.Get("x-correlation-id")
+	}
+
+	a.logger.
+		WithField("x-correlation-id", corrId).
+		WithField("subject", session.Subject).
+		WithField("extra", session.Extra).
+		Trace("hydrated subject and extra")
 
 	return nil
 }
@@ -298,6 +332,13 @@ func (a *AuthenticatorOAuth2Introspection) Config(config json.RawMessage) (*Auth
 	var c AuthenticatorOAuth2IntrospectionConfiguration
 	if err := a.c.AuthenticatorConfig(a.GetID(), config, &c); err != nil {
 		return nil, nil, NewErrAuthenticatorMisconfigured(a, err)
+	}
+	c.ScopeMatch = strings.ToLower(c.ScopeMatch)
+	if c.ScopeMatch == "" {
+		c.ScopeMatch = "all"
+	}
+	if c.ScopeMatch != "all" && c.ScopeMatch != "any" {
+		return nil, nil, NewErrAuthenticatorMisconfigured(a, errors.Errorf("invalid scope_match value %q, expected one of [all, any]", c.ScopeMatch))
 	}
 
 	rawKey, err := json.Marshal(&c)
@@ -318,6 +359,16 @@ func (a *AuthenticatorOAuth2Introspection) Config(config json.RawMessage) (*Auth
 
 			if c.PreAuth.Audience != "" {
 				ep = url.Values{"audience": {c.PreAuth.Audience}}
+			}
+
+			if len(c.PreAuth.ClientSecret) > 0 {
+				foc := x.FileOrContent(c.PreAuth.ClientSecret)
+				if foc.IsPath() {
+					a.logger.Debugf("Resolving ClientSecret from %s", foc.String())
+				} else {
+					a.logger.Debug("ClientSecret already raw string")
+				}
+				c.PreAuth.ClientSecret = foc.MustReadString()
 			}
 
 			rt = (&clientcredentials.Config{
