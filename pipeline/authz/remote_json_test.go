@@ -111,6 +111,23 @@ func TestAuthorizerRemoteJSONAuthorize(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "signed payload configured without signer registry",
+			setup: func(t *testing.T) *httptest.Server {
+				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusOK)
+				}))
+			},
+			session: &authn.AuthenticationSession{},
+			config: json.RawMessage(`{
+					"payload":"{}",
+					"signed_payload": {
+						"header": "X-Sig",
+						"shared_key": "secret"
+					}
+				}`),
+			wantErr: true,
+		},
+		{
 			name: "ok",
 			setup: func(t *testing.T) *httptest.Server {
 				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

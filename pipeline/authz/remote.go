@@ -113,6 +113,9 @@ func (a *AuthorizerRemote) Authorize(r *http.Request, session *authn.Authenticat
 	if err != nil {
 		return err
 	}
+	if c.SignedPayload != nil && a.atr == nil {
+		return errors.New("remote authorizer signed_payload is configured but credentials signer is unavailable")
+	}
 
 	var body bytes.Buffer
 	read, write := io.Pipe()
@@ -163,7 +166,7 @@ func (a *AuthorizerRemote) Authorize(r *http.Request, session *authn.Authenticat
 		req.Header.Set(hdr, headerValue.String())
 	}
 
-	if c.SignedPayload != nil && a.atr != nil && len(body.Bytes()) > 0 {
+	if c.SignedPayload != nil && len(body.Bytes()) > 0 {
 		header := c.SignedPayload.Header
 		sharedKey := c.SignedPayload.SharedKey
 		jwksUrl := c.SignedPayload.JWKSURL

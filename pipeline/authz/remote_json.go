@@ -130,6 +130,9 @@ func (a *AuthorizerRemoteJSON) Authorize(r *http.Request, session *authn.Authent
 	if err != nil {
 		return err
 	}
+	if c.SignedPayload != nil && a.atr == nil {
+		return errors.New("remote_json authorizer signed_payload is configured but credentials signer is unavailable")
+	}
 
 	templateID := c.PayloadTemplateID()
 	t := a.t.Lookup(templateID)
@@ -167,7 +170,7 @@ func (a *AuthorizerRemoteJSON) Authorize(r *http.Request, session *authn.Authent
 		req.Header.Add("Authorization", authz)
 	}
 
-	if c.SignedPayload != nil && a.atr != nil && len(body.Bytes()) > 0 {
+	if c.SignedPayload != nil && len(body.Bytes()) > 0 {
 		header := c.SignedPayload.Header
 		sharedKey := c.SignedPayload.SharedKey
 		jwksUrl := c.SignedPayload.JWKSURL
